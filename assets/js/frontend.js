@@ -1,0 +1,908 @@
+(function () {
+    'use strict';
+
+    if (typeof AuroraChatConfig === 'undefined') {
+        return;
+    }
+
+    const formatTime = () => {
+        const date = new Date();
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    };
+
+    const mdToHtml = (md) => {
+        if (!md) return '';
+        let s = String(md);
+        // Code blocks
+        s = s.replace(/```([a-z0-9_\-]+)?\n([\s\S]*?)\n```/gi, (m, lang, code) => {
+            const esc = code.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+            const cls = lang ? ` class="language-${lang}"` : '';
+            return `<pre><code${cls}>${esc}</code></pre>`;
+        });
+        // Inline code
+        s = s.replace(/`([^`]+)`/g, (m, code) => `<code>${code.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}</code>`);
+        // Horizontal rule: lines with ** or *** alone
+        s = s.replace(/^\s*\*{2,3}\s*$/gm, '<hr/>');
+        // Bold/italic
+        s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\*([^*]+)\*/g, '<em>$1</em>');
+        // Headings
+        s = s.replace(/^###\s+(.+)$/gm, '<h3>$1</h3>').replace(/^##\s+(.+)$/gm, '<h2>$1</h2>').replace(/^#\s+(.+)$/gm, '<h1>$1</h1>');
+        // Links
+        s = s.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1<\/a>');
+        // Bare URLs to links
+        s = s.replace(/(^|\s)(https?:\/\/[^\s<]+)(?=$|\s)/g, (m, pre, url) => `${pre}<a href="${url}" target="_blank" rel="noopener noreferrer">${url}<\/a>`);
+        // Paragraphs
+        s = s.split(/\n{2,}/).map(p => `<p>${p.replace(/\n/g,'<br>')}</p>`).join('');
+        // Unwrap hr inside p
+        s = s.replace(/<p><hr\/?><\/p>/g, '<hr/>');
+        return s;
+    };
+
+    const createMessage = (layout, role, html) => {
+        const article = document.createElement('article');
+        const prefix = layout === 'session' ? 'aurora-session' : 'aurora-bubble';
+        article.className = `${prefix}__message ${role}`;
+
+        const bubble = document.createElement('div');
+        bubble.className = `${prefix}__bubble`;
+        bubble.innerHTML = html;
+        article.appendChild(bubble);
+
+        if (layout === 'session') {
+            const timestamp = document.createElement('span');
+            timestamp.className = 'aurora-session__timestamp';
+            timestamp.textContent = formatTime();
+            article.appendChild(timestamp);
+        }
+
+        return article;
+    };
+
+    const scrollToBottom = (element) => {
+        element.scrollTop = element.scrollHeight;
+    };
+
+    // Renderização simples de anexos (imagens ou links)
+    const renderAttachments = (urls, messagesEl) => {
+        if (!Array.isArray(urls) || !urls.length || !messagesEl) return;
+        const cont = document.createElement('div');
+        cont.className = 'aurora-attachments';
+        urls.forEach((u) => {
+            try {
+                const clean = String(u);
+                const ext = (clean.split('?')[0].split('#')[0].split('.').pop() || '').toLowerCase();
+                const isImg = ['jpg','jpeg','png','gif','webp','avif','svg','bmp'].includes(ext);
+                const a = document.createElement('a');
+                a.href = clean; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.className = 'aurora-attachment-cell';
+                if (isImg) {
+                    const img = document.createElement('img'); img.src = clean; img.alt = 'anexo'; img.loading = 'lazy';
+                    a.appendChild(img);
+                } else {
+                    a.textContent = clean;
+                    a.classList.add('is-doc');
+                }
+                cont.appendChild(a);
+            } catch(e) { /* no-op */ }
+        });
+        messagesEl.appendChild(cont);
+    };
+
+    // Pré-visualização inline dentro da mensagem do bot (dinâmico, sem depender da extensão)
+    const renderInlinePreviews = (botMessageEl) => {
+        if (!botMessageEl) return;
+        const bubble = botMessageEl.querySelector('[class$="__bubble"]');
+        if (!bubble) return;
+
+    const links = Array.from(bubble.querySelectorAll('a[href^="http"]'));
+        if (!links.length) return;
+    // Remover target _blank para evitar abertura imediata em nova aba (nós tratamos o clique)
+    links.forEach((a) => { try { a.removeAttribute('target'); } catch(e){} });
+
+        const getYtId = (url) => {
+            try {
+                const u = new URL(url);
+                if (u.hostname.includes('youtu.be')) return u.pathname.slice(1);
+                if (u.hostname.includes('youtube.com')) {
+                    if (u.pathname.startsWith('/shorts/')) return u.pathname.split('/')[2];
+                    return u.searchParams.get('v');
+                }
+            } catch(e) { return null; }
+            return null;
+        };
+
+        const buildImgPreview = (url, alt) => {
+            const a = document.createElement('a');
+            a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.className = 'aurora-attachment-cell';
+            const img = document.createElement('img'); img.src = url; img.alt = alt || 'preview'; img.loading = 'lazy';
+            a.appendChild(img);
+            return a;
+        };
+
+        const buildLinkCard = (url) => {
+            let host = '';
+            try { host = new URL(url).hostname.replace(/^www\./,''); } catch(_) { host = url; }
+            const a = document.createElement('a');
+            a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.className = 'aurora-link-card';
+            const fav = document.createElement('div'); fav.className = 'aurora-link-card__favicon';
+            const img = document.createElement('img');
+            try {
+                const u = new URL(url);
+                img.src = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(u.hostname)}&sz=64`;
+            } catch(_) { img.src = ''; }
+            fav.appendChild(img);
+            const hostEl = document.createElement('div'); hostEl.className = 'aurora-link-card__host'; hostEl.textContent = host;
+            a.appendChild(fav); a.appendChild(hostEl);
+            return a;
+        };
+
+        const buildMshotPreview = (url) => {
+            const a = document.createElement('a');
+            a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.className = 'aurora-attachment-cell';
+            const img = document.createElement('img');
+            img.alt = 'preview'; img.loading = 'lazy';
+            img.src = 'https://s.wordpress.com/mshots/v1/' + encodeURIComponent(url) + '?w=320';
+            const showImage = () => {
+                a.classList.remove('is-doc');
+                a.innerHTML = '';
+                const im = document.createElement('img');
+                im.alt = 'preview'; im.loading = 'lazy'; im.src = img.src; a.appendChild(im);
+            };
+            const showCard = () => {
+                a.replaceWith(buildLinkCard(url));
+            };
+            const isMobile = (typeof window !== 'undefined') && (window.matchMedia && window.matchMedia('(max-width: 600px)').matches);
+            const timeoutMs = isMobile ? 8000 : 4500;
+            const to = setTimeout(() => { showCard(); }, timeoutMs);
+            img.onerror = () => { clearTimeout(to); showCard(); };
+            img.onload = () => { clearTimeout(to); if (img.naturalWidth < 24) showCard(); else showImage(); };
+            // Append a temp image to start loading; will be swapped on resolve
+            a.appendChild(img);
+            return a;
+        };
+
+        const isDocExt = (url) => {
+            const ext = (url.split('?')[0].split('#')[0].split('.').pop() || '').toLowerCase();
+            return ['pdf','doc','docx','xls','xlsx','ppt','pptx','txt','zip','rar','csv'].includes(ext);
+        };
+
+        links.forEach((link) => {
+            const url = link.href;
+            // Substitui o link imediatamente por um skeleton para evitar flicker do texto
+            const holder = document.createElement('span');
+            holder.className = 'aurora-inline-thumb';
+            const sk = document.createElement('span'); sk.className = 'aurora-thumb-skeleton';
+            holder.appendChild(sk);
+            link.replaceWith(holder);
+            // 1) YouTube
+            const yid = getYtId(url);
+            if (yid) {
+                const prev = buildImgPreview(`https://img.youtube.com/vi/${yid}/hqdefault.jpg`, 'YouTube');
+                holder.innerHTML = '';
+                holder.appendChild(prev);
+                return;
+            }
+            // 2) Tenta imagem real (sem depender de extensão)
+            const probe = new Image();
+            probe.loading = 'eager';
+            let decided = false;
+            const ok = () => {
+                if (decided) return; decided = true;
+                const prev = buildImgPreview(url, 'imagem');
+                holder.innerHTML = '';
+                holder.appendChild(prev);
+            };
+            const fail = () => {
+                if (decided) return; decided = true;
+                // 3) Se parecer documento por extensão, usa célula doc; caso contrário, screenshot do site
+                if (isDocExt(url)) {
+                    const a = document.createElement('a');
+                    a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.className = 'aurora-attachment-cell is-doc';
+                    a.textContent = url;
+                    holder.innerHTML = '';
+                    holder.appendChild(a);
+                } else {
+                    const prev = buildMshotPreview(url);
+                    holder.innerHTML = '';
+                    holder.appendChild(prev);
+                }
+            };
+            // Tempo maior no mobile/3G para evitar cair em fallback prematuro
+            const isMobile = (typeof window !== 'undefined') && (window.matchMedia && window.matchMedia('(max-width: 600px)').matches);
+            const timeout = setTimeout(() => { fail(); }, isMobile ? 7000 : 3000);
+            probe.onload = () => { clearTimeout(timeout); if (probe.naturalWidth > 0 && probe.naturalHeight > 0) ok(); else fail(); };
+            probe.onerror = () => { clearTimeout(timeout); fail(); };
+            try { probe.src = url; } catch(e) { clearTimeout(timeout); fail(); }
+        });
+    };
+
+    // ============== Modal / Lightbox ==============
+    const AuroraModal = (() => {
+        let root, contentEl;
+        let scale = 1, fitScale = 1, imgEl = null, tx = 0, ty = 0, labelBtn = null;
+
+        const ensure = () => {
+            if (root) return root;
+            root = document.createElement('div');
+            root.className = 'aurora-modal';
+                        root.innerHTML = `
+                            <div class="aurora-modal__dialog" role="dialog" aria-modal="true" aria-label="Visualização">
+                                <div class="aurora-modal__header">
+                                    <div class="aurora-modal__actions">
+                                        <button type="button" class="aurora-modal__btn" data-act="open-new">Abrir nova guia</button>
+                                        <button type="button" class="aurora-modal__btn aurora-modal__btn--primary" data-act="close">Fechar</button>
+                                    </div>
+                                </div>
+                                <div class="aurora-modal__content"></div>
+                            </div>`;
+            document.body.appendChild(root);
+            contentEl = root.querySelector('.aurora-modal__content');
+
+            // Backdrop close
+            root.addEventListener('click', (e) => {
+                if (e.target === root) close();
+            });
+            // Buttons
+            root.addEventListener('click', (e) => {
+                const btn = e.target.closest('[data-act]');
+                if (!btn) return;
+                const act = btn.getAttribute('data-act');
+                if (act === 'close') close();
+                if (act === 'open-new' && root.dataset.url) window.open(root.dataset.url, '_blank', 'noopener');
+            });
+            // Esc
+            document.addEventListener('keydown', (e) => { if (root.classList.contains('is-open') && e.key === 'Escape') close(); });
+            return root;
+        };
+
+        const applyTransform = () => {
+            if (!imgEl) return;
+            imgEl.style.transform = `translate(calc(-50% + ${tx}px), calc(-50% + ${ty}px)) scale(${scale})`;
+        };
+
+        const updateLabel = () => {
+            if (!labelBtn) return;
+            const pct = Math.round((scale / (fitScale || 1)) * 100);
+            labelBtn.textContent = `${pct}%`;
+        };
+
+        const setImageZoomUI = () => {
+            const wrap = document.createElement('div');
+            wrap.className = 'aurora-modal__image-wrap';
+            wrap.appendChild(imgEl);
+            const bar = document.createElement('div');
+            bar.className = 'aurora-modal__zoombar';
+            const mk = (label, step) => {
+                const b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'aurora-zoombtn';
+                b.textContent = label;
+                b.addEventListener('click', () => {
+                    const minS = Math.max(0.25 * fitScale, 0.1);
+                    scale = Math.min(6 * fitScale, Math.max(minS, scale + step));
+                    tx = 0; ty = 0;
+                    applyTransform();
+                    updateLabel();
+                });
+                return b;
+            };
+            // Ordem: -, +, 100%
+            bar.appendChild(mk('−', -0.25 * (fitScale || 1)));
+            bar.appendChild(mk('+', 0.25 * (fitScale || 1)));
+            labelBtn = document.createElement('button');
+            labelBtn.type = 'button';
+            labelBtn.className = 'aurora-zoombtn aurora-zoombtn--label';
+            labelBtn.textContent = '100%';
+            labelBtn.addEventListener('click', () => { scale = fitScale; tx = 0; ty = 0; applyTransform(); updateLabel(); });
+            bar.appendChild(labelBtn);
+            wrap.appendChild(bar);
+
+            // Drag to pan when zoomed
+            let isDown = false, startX = 0, startY = 0;
+            wrap.addEventListener('mousedown', (e) => { if (scale <= 1) return; isDown = true; startX = e.clientX - tx; startY = e.clientY - ty; wrap.style.cursor = 'grabbing'; });
+            window.addEventListener('mouseup', () => { isDown = false; wrap.style.cursor = ''; });
+            window.addEventListener('mousemove', (e) => { if (!isDown) return; tx = e.clientX - startX; ty = e.clientY - startY; applyTransform(); });
+            // Touch
+            wrap.addEventListener('touchstart', (e) => { if (scale <= fitScale) return; const t = e.touches[0]; isDown = true; startX = t.clientX - tx; startY = t.clientY - ty; }, {passive:true});
+            wrap.addEventListener('touchend', () => { isDown = false; }, {passive:true});
+            wrap.addEventListener('touchmove', (e) => { if (!isDown) return; const t = e.touches[0]; tx = t.clientX - startX; ty = t.clientY - startY; applyTransform(); }, {passive:true});
+            // Wheel zoom
+            wrap.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                const delta = Math.sign(e.deltaY) * -0.15 * (fitScale || 1); // invert to natural
+                const minS = Math.max(0.25 * fitScale, 0.1);
+                scale = Math.min(6 * fitScale, Math.max(minS, scale + delta));
+                applyTransform();
+                updateLabel();
+            }, {passive:false});
+
+            // Initialize
+            updateLabel();
+
+            return wrap;
+        };
+
+        const close = () => {
+            if (!root) return;
+            root.classList.remove('is-open');
+            contentEl.innerHTML = '';
+            document.documentElement.classList.remove('aurora-chat-lock-scroll');
+        };
+
+        const openURL = (url, title, isImage) => {
+            ensure();
+            root.dataset.url = url;
+            contentEl.innerHTML = '';
+            document.documentElement.classList.add('aurora-chat-lock-scroll');
+
+            const openAsImage = () => {
+                imgEl = new Image();
+                imgEl.className = 'aurora-modal__image';
+                imgEl.alt = title || '';
+                imgEl.onload = () => {
+                    // montar UI
+                    contentEl.innerHTML = '';
+                    const wrap = setImageZoomUI();
+                    contentEl.appendChild(wrap);
+                    // calcular escala de ajuste (fit) usando dimensões naturais e container
+                    const rect = wrap.getBoundingClientRect();
+                    const iw = Math.max(1, imgEl.naturalWidth || imgEl.width);
+                    const ih = Math.max(1, imgEl.naturalHeight || imgEl.height);
+                    fitScale = Math.min(rect.width / iw, rect.height / ih);
+                    if (!isFinite(fitScale) || fitScale <= 0) fitScale = 1;
+                    scale = fitScale; tx = 0; ty = 0;
+                    applyTransform();
+                    updateLabel();
+                };
+                imgEl.src = url;
+                root.classList.add('is-open');
+            };
+
+            const openAsIframe = () => {
+                const iframe = document.createElement('iframe');
+                iframe.className = 'aurora-modal__iframe';
+                iframe.referrerPolicy = 'no-referrer-when-downgrade';
+                iframe.src = url;
+                let loaded = false;
+                iframe.addEventListener('load', () => { loaded = true; });
+                contentEl.innerHTML = '';
+                contentEl.appendChild(iframe);
+                root.classList.add('is-open');
+                setTimeout(() => {
+                    if (loaded) return;
+                    const tip = document.createElement('div');
+                    tip.className = 'aurora-modal__fallback';
+                    tip.innerHTML = `<div><p>Se o conteúdo não aparecer, ele pode bloquear a exibição embutida.</p><button type=\"button\" class=\"aurora-modal__btn\" data-act=\"open-new\">Abrir em nova guia</button></div>`;
+                    contentEl.appendChild(tip);
+                }, 1500);
+            };
+
+            if (isImage) { openAsImage(); return; }
+
+            // Probe: muitos links de imagem não possuem extensão; testa como <img> antes de iframe
+            let decided = false;
+            const probe = new Image();
+            const decideImage = () => { if (decided) return; decided = true; openAsImage(); };
+            const decideIframe = () => { if (decided) return; decided = true; openAsIframe(); };
+            const timer = setTimeout(decideIframe, 900); // se não carregar rápido, assume iframe
+            probe.onload = () => { clearTimeout(timer); if (probe.naturalWidth > 0 && probe.naturalHeight > 0) decideImage(); else decideIframe(); };
+            probe.onerror = () => { clearTimeout(timer); decideIframe(); };
+            try { probe.src = url; } catch(e) { clearTimeout(timer); decideIframe(); }
+        };
+
+        return { openURL, close };
+    })();
+
+    const isImageURL = (url) => /\.(png|jpe?g|gif|bmp|webp|svg)(\?.*)?$/i.test(url);
+
+    const sendRequest = async (agentId, message, session, userMeta) => {
+        const payload = new FormData();
+        payload.append('action', 'aurora_chat_send_message');
+        payload.append('nonce', AuroraChatConfig.nonce);
+        payload.append('agentId', agentId);
+        payload.append('message', message);
+        payload.append('session', session);
+        if (userMeta && typeof userMeta === 'object') {
+            if (userMeta.name) payload.append('userName', userMeta.name);
+            if (userMeta.email) payload.append('userEmail', userMeta.email);
+            if (userMeta.contact) payload.append('userContact', userMeta.contact);
+        }
+
+        const response = await fetch(AuroraChatConfig.ajaxUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            body: payload,
+        });
+
+        if (!response.ok) {
+            throw new Error('Request error');
+        }
+
+        const data = await response.json();
+        if (!data.success) {
+            throw new Error(data.data && data.data.message ? data.data.message : 'Unknown error');
+        }
+
+        return data.data;
+    };
+
+    const initChat = (container) => {
+    const layout = container.classList.contains('aurora-chat-layout-session') ? 'session' : 'bubble';
+    const messages = container.querySelector('[data-aurora-role="messages"]');
+        const composer = container.querySelector('[data-aurora-role="composer"]');
+        const footer = container.querySelector('[data-aurora-role="footer"]');
+        const overlay = container.querySelector('[data-aurora-role="overlay"]');
+        const welcome = container.querySelector('[data-aurora-role="welcome"]');
+        const startButton = container.querySelector('[data-aurora-role="start"]');
+        const statusEl = container.querySelector('[data-aurora-role="status"]');
+        // Popular avatar/brand com ícone do site ou inicial
+        try {
+            const brand = (typeof AuroraChatConfig !== 'undefined' && AuroraChatConfig.brand) ? AuroraChatConfig.brand : null;
+            if (brand) {
+                if (layout === 'session') {
+                    const avatar = container.querySelector('.aurora-session__avatar');
+                    if (avatar) {
+                        if (brand.icon) {
+                            avatar.textContent = '';
+                            avatar.style.background = `center/cover no-repeat url(${brand.icon})`;
+                            avatar.setAttribute('aria-hidden','true');
+                        } else if (brand.initial) {
+                            avatar.style.background = '';
+                            avatar.textContent = brand.initial;
+                        }
+                    }
+                } else {
+                    const brandIcon = container.querySelector('.aurora-bubble__brand-icon');
+                    if (brandIcon) {
+                        if (brand.icon) {
+                            brandIcon.textContent = '';
+                            brandIcon.style.background = `center/cover no-repeat url(${brand.icon})`;
+                            brandIcon.setAttribute('aria-hidden','true');
+                        } else if (brand.initial) {
+                            brandIcon.style.background = '';
+                            brandIcon.textContent = brand.initial;
+                        }
+                    }
+                }
+            }
+        } catch(e) { /* no-op */ }
+    const handoffButton = null; // removido
+
+        if (!messages || !composer) {
+            return;
+        }
+
+        const input = composer.querySelector('textarea, input');
+        if (!input) {
+            return;
+        }
+
+        const generateSession = () => {
+            if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+                return crypto.randomUUID();
+            }
+            return `aurora-${Math.random().toString(16).slice(2)}${Date.now()}`;
+        };
+
+        const setStatus = (() => {
+            let timer;
+            return (mode, value) => {
+                if (!statusEl) {
+                    return;
+                }
+
+                if (timer) {
+                    clearTimeout(timer);
+                    timer = null;
+                }
+
+                switch (mode) {
+                    case 'responding':
+                        statusEl.textContent = AuroraChatConfig.i18n.statusResponding || 'Respondendo…';
+                        break;
+                    case 'complete':
+                        statusEl.textContent = (AuroraChatConfig.i18n.statusComplete || 'Resposta em %ss').replace('%s', value || '1.0');
+                        timer = setTimeout(() => setStatus('idle'), 2500);
+                        break;
+                    case 'idle':
+                    default:
+                        statusEl.textContent = AuroraChatConfig.i18n.statusIdle || 'Online';
+                        break;
+                }
+            };
+        })();
+
+        setStatus('idle');
+
+        // Atualizar textos de boas-vindas e placeholders a partir das i18n, se disponíveis
+        try {
+            const i18n = (typeof AuroraChatConfig !== 'undefined') ? AuroraChatConfig.i18n : null;
+            if (i18n) {
+                if (layout === 'bubble') {
+                    const t = container.querySelector('.aurora-bubble__welcome-title');
+                    const s = container.querySelector('.aurora-bubble__welcome-subtitle');
+                    if (t && i18n.welcomeTitle) t.textContent = i18n.welcomeTitle;
+                    if (s && i18n.welcomeSubtitle) s.textContent = i18n.welcomeSubtitle;
+                } else {
+                    const firstBot = container.querySelector('.aurora-session__message.is-bot .aurora-session__bubble p');
+                    if (firstBot && i18n.welcomeBot) firstBot.textContent = i18n.welcomeBot;
+                }
+            }
+        } catch(e) { /* no-op */ }
+
+    let interactions = 0;
+        let isSending = false;
+        let sessionId = generateSession();
+        const maxTurns = parseInt(container.dataset.maxTurns || '0', 10);
+        const sendForm = parseInt(container.dataset.sendForm || '0', 10) === 1;
+        const agentId = parseInt(container.dataset.agent || '0', 10);
+    // Pré-chat form state
+    let prechatCollected = false;
+    let prechatData = null;
+
+        // handoff removido
+
+        const removeWelcome = () => {
+            if (welcome && welcome.parentNode) {
+                // anima remoção rápida
+                welcome.style.transition = 'opacity .18s ease, transform .18s ease';
+                welcome.style.opacity = '0';
+                welcome.style.transform = 'translateY(-4px)';
+                setTimeout(() => { if (welcome.parentNode) welcome.remove(); }, 190);
+            }
+        };
+
+        const ensureStarted = () => {
+            if (layout === 'bubble' && !container.classList.contains('aurora-chat-has-started')) {
+                container.classList.add('aurora-chat-has-started');
+                removeWelcome();
+                if (composer) composer.hidden = false;
+            }
+        };
+
+        if (startButton) {
+            startButton.addEventListener('click', () => {
+                ensureStarted();
+                input.focus();
+            });
+        }
+
+        // No layout sessão: Enter = enviar; Ctrl/Cmd+Enter = nova linha
+        if (layout === 'session' && input.tagName === 'TEXTAREA') {
+            const doSubmit = () => {
+                if (isSending) return;
+                if (typeof composer.requestSubmit === 'function') composer.requestSubmit();
+                else composer.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+            };
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    if (e.ctrlKey || e.metaKey) {
+                        // permitir quebra de linha
+                        return;
+                    }
+                    // enviar com Enter
+                    e.preventDefault();
+                    if (input.value.trim()) doSubmit();
+                }
+            });
+        }
+
+        composer.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const value = input.value.trim();
+
+            if (!value || isSending) {
+                return;
+            }
+
+            if (maxTurns > 0 && interactions >= maxTurns) {
+                alert(AuroraChatConfig.i18n.limitReached);
+                return;
+            }
+
+            ensureStarted();
+
+            interactions += 1;
+            isSending = true;
+            container.classList.add('aurora-chat-is-loading');
+            setStatus('responding');
+            // Desabilita controles somente se form não for necessário (ou após envio do form)
+            const disableControls = () => {
+                try {
+                    input.disabled = true;
+                    const sendBtn = container.querySelector('[data-aurora-role="send"]');
+                    if (sendBtn) sendBtn.disabled = true;
+                } catch(e) {}
+            };
+
+            const startTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
+
+            const userMessage = createMessage(layout, 'is-user', value.replace(/\n/g, '<br>'));
+            messages.appendChild(userMessage);
+            if (layout === 'bubble') removeWelcome();
+            scrollToBottom(messages);
+            input.value = '';
+            input.focus();
+
+            // Se for necessário coletar formulário pré-atendimento e ainda não foi coletado, mostrar formulário e aguardar
+            if (sendForm && !prechatCollected) {
+                const formWrapper = document.createElement('div');
+                formWrapper.className = 'aurora-prechat-wrapper';
+                formWrapper.innerHTML = `
+                    <form class="aurora-prechat-form">
+                        <div class="aurora-prechat-title">Antes de começarmos, preencha seus dados</div>
+                        <div class="aurora-prechat-row">
+                            <label>Nome</label>
+                            <input type="text" name="name" placeholder="Seu nome" required />
+                        </div>
+                        <div class="aurora-prechat-row">
+                            <label>E-mail</label>
+                            <input type="email" name="email" placeholder="voce@exemplo.com" required />
+                        </div>
+                        <div class="aurora-prechat-row">
+                            <label>Contato</label>
+                            <input type="text" name="contact" placeholder="WhatsApp/Telefone" required />
+                        </div>
+                        <div class="aurora-prechat-actions">
+                            <button type="submit" class="aurora-prechat-submit">Enviar</button>
+                            <button type="button" class="aurora-prechat-cancel">Cancelar</button>
+                        </div>
+                    </form>
+                `;
+                messages.appendChild(formWrapper);
+                scrollToBottom(messages);
+
+                const formEl = formWrapper.querySelector('form');
+                const cancelBtn = formWrapper.querySelector('.aurora-prechat-cancel');
+
+                const validate = (data) => {
+                    const errs = [];
+                    if (!data.name || data.name.length < 2) errs.push('Informe um nome válido.');
+                    if (!data.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) errs.push('Informe um e-mail válido.');
+                    if (!data.contact || data.contact.length < 5) errs.push('Informe um contato válido.');
+                    return errs;
+                };
+
+                const showErrors = (errs) => {
+                    let box = formWrapper.querySelector('.aurora-prechat-errors');
+                    if (!box) {
+                        box = document.createElement('div');
+                        box.className = 'aurora-prechat-errors';
+                        formEl.prepend(box);
+                    }
+                    box.innerHTML = errs.map(e => `<div class="err">${e}</div>`).join('');
+                };
+
+                const proceedSend = async (meta) => {
+                    disableControls();
+                    // adiciona indicador de digitação e envia
+                    const typingIndicator = createMessage(layout, 'is-bot is-typing', '<span class="aurora-chat-typing"><span></span><span></span><span></span></span>');
+                    messages.appendChild(typingIndicator);
+                    scrollToBottom(messages);
+                    try {
+                        const { reply, session, attachments } = await sendRequest(agentId, value, sessionId, meta);
+                        sessionId = session || sessionId;
+                        typingIndicator.remove();
+                        const botMessage = createMessage(layout, 'is-bot', mdToHtml(reply));
+                        messages.appendChild(botMessage);
+                        renderInlinePreviews(botMessage);
+                        if (attachments && attachments.length) {
+                            renderAttachments(attachments, messages);
+                        }
+                        if (typeof performance !== 'undefined') {
+                            const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
+                            setStatus('complete', elapsed);
+                        } else {
+                            setStatus('complete', '1.0');
+                        }
+                    } catch (error) {
+                        console.error('[Aurora Chat]', error);
+                        const fallbackMessage = createMessage(layout, 'is-bot', AuroraChatConfig.i18n.errorDefault);
+                        messages.appendChild(fallbackMessage);
+                        setStatus('idle');
+                    } finally {
+                        scrollToBottom(messages);
+                        isSending = false;
+                        container.classList.remove('aurora-chat-is-loading');
+                        // Reabilitar controles após envio via pré-form
+                        try {
+                            input.disabled = false;
+                            const sendBtn = container.querySelector('[data-aurora-role="send"]');
+                            if (sendBtn) sendBtn.disabled = false;
+                            input.focus();
+                        } catch(e) {}
+                    }
+                };
+
+                formEl.addEventListener('submit', async (ev) => {
+                    ev.preventDefault();
+                    const data = {
+                        name: formEl.name.value.trim(),
+                        email: formEl.email.value.trim(),
+                        contact: formEl.contact.value.trim(),
+                    };
+                    const errs = validate(data);
+                    if (errs.length) return showErrors(errs);
+                    prechatCollected = true;
+                    prechatData = data;
+                    formWrapper.remove();
+                    await proceedSend(prechatData);
+                });
+
+                cancelBtn.addEventListener('click', () => {
+                    // cancelar envio; reverter estado básico
+                    formWrapper.remove();
+                    isSending = false;
+                    interactions = Math.max(0, interactions - 1);
+                    container.classList.remove('aurora-chat-is-loading');
+                    setStatus('idle');
+                    try {
+                        input.disabled = false;
+                        const sendBtn = container.querySelector('[data-aurora-role="send"]');
+                        if (sendBtn) sendBtn.disabled = false;
+                        input.focus();
+                    } catch(e) {}
+                });
+
+                return; // não continuar o fluxo padrão até o formulário ser resolvido
+            }
+
+            disableControls();
+            const typingIndicator = createMessage(layout, 'is-bot is-typing', '<span class="aurora-chat-typing"><span></span><span></span><span></span></span>');
+            messages.appendChild(typingIndicator);
+            scrollToBottom(messages);
+
+            try {
+                const { reply, session, attachments } = await sendRequest(agentId, value, sessionId, prechatData);
+                sessionId = session || sessionId;
+                typingIndicator.remove();
+
+                const botMessage = createMessage(layout, 'is-bot', mdToHtml(reply));
+                messages.appendChild(botMessage);
+                // Pré-visualizar URLs inline dentro do conteúdo do bot
+                renderInlinePreviews(botMessage);
+                if (attachments && attachments.length) {
+                    renderAttachments(attachments, messages);
+                }
+
+                // anexos (urls) opcionais
+                try {
+                    const last = arguments.callee.lastResponse || null; // not reliable, keep simple: we will use extra fetch return soon
+                } catch(e) {}
+
+                if (typeof performance !== 'undefined') {
+                    const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
+                    setStatus('complete', elapsed);
+                } else {
+                    setStatus('complete', '1.0');
+                }
+            } catch (error) {
+                console.error('[Aurora Chat]', error);
+                typingIndicator.remove();
+                const fallbackMessage = createMessage(layout, 'is-bot', AuroraChatConfig.i18n.errorDefault);
+                messages.appendChild(fallbackMessage);
+                setStatus('idle');
+            } finally {
+                scrollToBottom(messages);
+                isSending = false;
+                container.classList.remove('aurora-chat-is-loading');
+                // Reabilitar controles
+                try {
+                    input.disabled = false;
+                    const sendBtn = container.querySelector('[data-aurora-role="send"]');
+                    if (sendBtn) sendBtn.disabled = false;
+                    input.focus();
+                } catch(e) {}
+            }
+        });
+
+        if (layout === 'bubble') {
+            const bubble = container.querySelector('[data-aurora-role="bubble"]');
+            if (!bubble) {
+                return;
+            }
+
+            // Isola o widget de bolha do DOM do construtor de páginas (ex: Elementor) para evitar overflow/clipping.
+            // Move o container de bolha para o body na primeira inicialização.
+            if (!bubble.__auroraMountedToBody) {
+                bubble.__auroraMountedToBody = true;
+                const holder = document.createElement('div');
+                holder.className = 'aurora-chat-container aurora-chat-layout-bubble';
+                // Preserva atributos de dados relevantes
+                holder.dataset.agent = container.dataset.agent || '0';
+                holder.dataset.maxTurns = container.dataset.maxTurns || '0';
+                holder.dataset.sendForm = container.dataset.sendForm || '0';
+                // Move o bubble para o novo holder e monta no body
+                holder.appendChild(bubble);
+                document.body.appendChild(holder);
+                // Reatribui ponteiros locais para o novo escopo
+                container = holder;
+            }
+
+            const toggle = bubble.querySelector('.aurora-bubble__launcher');
+            const panel = bubble.querySelector('.aurora-bubble__panel');
+            const close = bubble.querySelector('.aurora-bubble__close');
+
+            const openPanel = () => {
+                if (!panel.hidden) return;
+                panel.hidden = false;
+                panel.classList.remove('is-closing');
+                panel.classList.add('is-opening');
+                requestAnimationFrame(() => {
+                    panel.classList.add('is-visible');
+                });
+                if (toggle) toggle.setAttribute('aria-expanded', 'true');
+                if (startButton) startButton.focus(); else input.focus();
+                document.addEventListener('mousedown', outsideHandler);
+                document.addEventListener('keydown', escHandler);
+                if (overlay) overlay.hidden = false;
+                document.documentElement.classList.add('aurora-chat-lock-scroll');
+            };
+
+            const closePanel = () => {
+                if (panel.hidden) return;
+                panel.classList.remove('is-opening');
+                panel.classList.add('is-closing');
+                panel.classList.remove('is-visible');
+                if (toggle) toggle.setAttribute('aria-expanded', 'false');
+                const end = () => {
+                    panel.hidden = true;
+                    panel.removeEventListener('animationend', end);
+                };
+                panel.addEventListener('animationend', end);
+                document.removeEventListener('mousedown', outsideHandler);
+                document.removeEventListener('keydown', escHandler);
+                if (overlay) overlay.hidden = true;
+                document.documentElement.classList.remove('aurora-chat-lock-scroll');
+            };
+
+            const outsideHandler = (e) => {
+                if (panel.hidden) return;
+                if (overlay && e.target === overlay) { closePanel(); return; }
+                if (!panel.contains(e.target) && !toggle.contains(e.target)) closePanel();
+            };
+            const escHandler = (e) => { if (e.key === 'Escape') closePanel(); };
+
+            if (toggle) {
+                toggle.addEventListener('click', () => {
+                    const expanded = toggle.getAttribute('aria-expanded') === 'true';
+                    expanded ? closePanel() : openPanel();
+                });
+            }
+
+            if (close) close.addEventListener('click', closePanel);
+            if (overlay) overlay.addEventListener('click', closePanel);
+        }
+
+        // Abrir links dentro do histórico no popup (mensagens do bot e anexos)
+        messages.addEventListener('click', (e) => {
+            const a = e.target.closest('a');
+            if (!a) return;
+            const href = a.getAttribute('href') || '';
+            if (!/^https?:\/\//i.test(href)) return; // só http(s)
+            // Respeitar ctrl/cmd/shift para nova aba/janela
+            if (e.ctrlKey || e.metaKey || e.shiftKey || a.getAttribute('download') !== null) return;
+            // Impedir navegação padrão e garantir prioridade
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            // Redireciono direto para domínios que negam iframe (ex.: WhatsApp)
+            try {
+                const u = new URL(href);
+                const host = u.hostname.toLowerCase();
+                const denyHosts = ['whatsapp.com','api.whatsapp.com','web.whatsapp.com'];
+                if (denyHosts.some(d => host === d || host.endsWith('.'+d))) {
+                    window.open(href, '_blank', 'noopener');
+                    return;
+                }
+            } catch(_) {}
+            const isImg = isImageURL(href);
+            AuroraModal.openURL(href, a.textContent || href, isImg);
+        }, true);
+    };
+
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('.aurora-chat-container').forEach((container) => {
+            initChat(container);
+        });
+    });
+})();

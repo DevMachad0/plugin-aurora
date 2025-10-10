@@ -1,0 +1,92 @@
+.aurora-chat-admin__tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+}
+
+.aurora-chat-admin__tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border: 1px solid #c3c4c7;
+    border-radius: 6px;
+    background: #fff;
+    text-decoration: none;
+    font-weight: 600;
+    color: #2c3338;
+    transition: all 0.2s ease;
+}
+
+.aurora-chat-admin__tab:hover {
+    border-color: #2271b1;
+    color: #2271b1;
+}
+
+.aurora-chat-admin__tab.is-active {
+    background: linear-gradient(135deg, #5d60ff, #8f76ff);
+    border-color: transparent;
+    color: #fff;
+}
+
+.aurora-chat-admin__content {
+    display: grid;
+    gap: 24px;
+}
+
+.aurora-chat-admin__card {
+    background: #fff;
+    padding: 24px;
+    border-radius: 10px;
+    box-shadow: 0 12px 24px rgba(12, 18, 32, 0.08);
+}
+
+.aurora-chat-admin__field {
+    margin-bottom: 20px;
+}
+
+.aurora-chat-admin__field label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.aurora-chat-admin__split {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+}
+
+.aurora-chat-admin__section-title {
+    margin: 0;
+}
+
+.aurora-chat-templates-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 20px;
+}
+
+.aurora-chat-template-card {
+    background: #fff;
+    padding: 20px;
+    border-radius: 12px;
+    box-shadow: 0 12px 24px rgba(12, 18, 32, 0.06);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.aurora-chat-template-card__actions {
+    margin-top: auto;
+    display: flex;
+    gap: 10px;
+}
+
+.aurora-chat-admin__restore {
+    text-align: right;
+}
+
+.settings-error {
+    margin: 0;
+}
