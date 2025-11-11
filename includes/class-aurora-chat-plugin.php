@@ -47,6 +47,10 @@ class Aurora_Chat_Plugin {
     const META_SHORTCODE    = '_aurora_shortcode';
     const META_REMOTE_AGENT_ID = '_aurora_remote_agent_id';
     const META_REMOTE_WEBHOOK  = '_aurora_remote_webhook';
+    /**
+     * Limite máximo de caracteres por mensagem do usuário.
+     */
+    const META_MAX_INPUT_CHARS = '_aurora_max_input_chars';
 
     /**
      * Retorna instância única.
@@ -83,6 +87,8 @@ class Aurora_Chat_Plugin {
 
         add_action( 'wp_ajax_aurora_chat_send_message', [ $this, 'handle_ajax_message' ] );
         add_action( 'wp_ajax_nopriv_aurora_chat_send_message', [ $this, 'handle_ajax_message' ] );
+    add_action( 'wp_ajax_aurora_chat_send_audio', [ $this, 'handle_ajax_audio' ] );
+    add_action( 'wp_ajax_nopriv_aurora_chat_send_audio', [ $this, 'handle_ajax_audio' ] );
 
         register_activation_hook( AURORA_CHAT_FILE, [ self::class, 'activate' ] );
     }
@@ -117,6 +123,14 @@ class Aurora_Chat_Plugin {
         wp_register_style(
             'aurora-chat-frontend',
             AURORA_CHAT_URL . 'assets/css/frontend.css',
+            [],
+            AURORA_CHAT_VERSION
+        );
+
+        // Tema escuro opcional (carregado sob demanda)
+        wp_register_style(
+            'aurora-chat-dark',
+            AURORA_CHAT_URL . 'assets/css/dark.css',
             [],
             AURORA_CHAT_VERSION
         );
@@ -160,6 +174,8 @@ class Aurora_Chat_Plugin {
 
         if ( has_shortcode( get_post()->post_content ?? '', self::SHORTCODE ) ) {
             wp_enqueue_style( 'aurora-chat-frontend' );
+            // Carrega tema escuro para permitir alternância no front
+            wp_enqueue_style( 'aurora-chat-dark' );
             wp_enqueue_script( 'aurora-chat-frontend' );
 
             $site_name = get_bloginfo( 'name' );
@@ -172,6 +188,8 @@ class Aurora_Chat_Plugin {
                 'status_idle'      => __( 'Online', 'aurora-chat' ),
                 'status_responding'=> __( 'Respondendo…', 'aurora-chat' ),
                 'status_complete'  => __( 'Resposta em %ss', 'aurora-chat' ),
+                'status_offline'   => __( 'Offline', 'aurora-chat' ),
+                'agent_status'     => 'online',
                 'welcome_title'    => __( 'Bem-vindo', 'aurora-chat' ),
                 'welcome_subtitle' => __( 'Estamos aqui para ajudar!', 'aurora-chat' ),
                 'welcome_bot'      => __( 'Olá! Sou o Aurora, seu copiloto digital. Como posso te ajudar hoje?', 'aurora-chat' ),
@@ -190,16 +208,20 @@ class Aurora_Chat_Plugin {
                         'statusIdle'   => $opts['status_idle'],
                         'statusResponding' => $opts['status_responding'],
                         'statusComplete'   => $opts['status_complete'],
+                        'statusOffline'    => $opts['status_offline'],
+                        'statusTranscribing' => __( 'Transcrevendo…', 'aurora-chat' ),
                         'welcomeTitle' => $opts['welcome_title'],
                         'welcomeSubtitle' => $opts['welcome_subtitle'],
                         'welcomeBot' => $opts['welcome_bot'],
                         'closeMessage' => $opts['close_message'],
+                        'charsLimit' => __( 'Sua mensagem excede o limite de %d caracteres. Por favor, reduza o texto.', 'aurora-chat' ),
                     ],
                     'brand' => [
                         'name'    => $site_name,
                         'initial' => $site_initial,
                         'icon'    => $site_icon_id,
                     ],
+                    'agentStatus' => in_array( $opts['agent_status'], [ 'online', 'offline' ], true ) ? $opts['agent_status'] : 'online',
                     // Sem configurações específicas de agente neste contexto
                 ]
             );
@@ -421,6 +443,12 @@ class Aurora_Chat_Plugin {
         echo '<input type="number" id="aurora-agent-max-turns" name="aurora_agent_max_turns" min="0" step="1" placeholder="0 = sem limite" />';
         echo '</div>';
 
+    echo '<div class="aurora-chat-admin__field">';
+    echo '<label for="aurora-agent-max-chars">' . esc_html__( 'Limite de caracteres por mensagem', 'aurora-chat' ) . '</label>';
+    echo '<input type="number" id="aurora-agent-max-chars" name="aurora_agent_max_chars" min="0" step="1" placeholder="0 = sem limite" />';
+    echo '<p class="description">' . esc_html__( 'Quando definido, mensagens do usuário serão cortadas para esse tamanho antes do envio.', 'aurora-chat' ) . '</p>';
+    echo '</div>';
+
         echo '<div class="aurora-chat-admin__field">';
         echo '<label for="aurora-agent-send-form">' . esc_html__( 'Enviar formulário de atendimento', 'aurora-chat' ) . '</label>';
         echo '<select id="aurora-agent-send-form" name="aurora_agent_send_form" class="widefat">';
@@ -460,9 +488,10 @@ class Aurora_Chat_Plugin {
     $endpoint    = ''; // não utilizado nesta simplificação
     $remote_id   = ''; // não utilizado nesta simplificação
     $remote_wh   = isset( $_POST['aurora_agent_remote_webhook'] ) ? esc_url_raw( wp_unslash( $_POST['aurora_agent_remote_webhook'] ) ) : '';
-        $template_id = isset( $_POST['aurora_agent_template'] ) ? absint( $_POST['aurora_agent_template'] ) : 0;
-        $max_turns   = isset( $_POST['aurora_agent_max_turns'] ) ? absint( $_POST['aurora_agent_max_turns'] ) : 0;
-        $send_form   = isset( $_POST['aurora_agent_send_form'] ) ? absint( $_POST['aurora_agent_send_form'] ) : 0;
+    $template_id = isset( $_POST['aurora_agent_template'] ) ? absint( $_POST['aurora_agent_template'] ) : 0;
+    $max_turns   = isset( $_POST['aurora_agent_max_turns'] ) ? absint( $_POST['aurora_agent_max_turns'] ) : 0;
+    $max_chars   = isset( $_POST['aurora_agent_max_chars'] ) ? absint( $_POST['aurora_agent_max_chars'] ) : 0;
+    $send_form   = isset( $_POST['aurora_agent_send_form'] ) ? absint( $_POST['aurora_agent_send_form'] ) : 0;
 
         if ( empty( $title ) || empty( $remote_wh ) ) {
             add_settings_error( 'aurora_chat', 'aurora_agent_error', __( 'Preencha todos os campos obrigatórios.', 'aurora-chat' ), 'error' );
@@ -497,7 +526,8 @@ class Aurora_Chat_Plugin {
         }
 
         update_post_meta( $post_id, self::META_MAX_TURNS, $max_turns );
-        update_post_meta( $post_id, self::META_SEND_FORM, $send_form ? 1 : 0 );
+    update_post_meta( $post_id, self::META_SEND_FORM, $send_form ? 1 : 0 );
+    update_post_meta( $post_id, self::META_MAX_INPUT_CHARS, $max_chars );
 
         $shortcode = sprintf( '[%s id="%d"]', self::SHORTCODE, $post_id );
         update_post_meta( $post_id, self::META_SHORTCODE, $shortcode );
@@ -601,7 +631,8 @@ class Aurora_Chat_Plugin {
         status_header( 200 );
         nocache_headers();
 
-        wp_enqueue_style( 'aurora-chat-frontend' );
+    wp_enqueue_style( 'aurora-chat-frontend' );
+    wp_enqueue_style( 'aurora-chat-dark' );
         wp_enqueue_script( 'aurora-chat-frontend' );
 
         $site_name = get_bloginfo( 'name' );
@@ -614,6 +645,8 @@ class Aurora_Chat_Plugin {
             'status_idle'      => __( 'Online', 'aurora-chat' ),
             'status_responding'=> __( 'Respondendo…', 'aurora-chat' ),
             'status_complete'  => __( 'Resposta em %ss', 'aurora-chat' ),
+            'status_offline'   => __( 'Offline', 'aurora-chat' ),
+            'agent_status'     => 'online',
             'welcome_title'    => __( 'Bem-vindo', 'aurora-chat' ),
             'welcome_subtitle' => __( 'Estamos aqui para ajudar!', 'aurora-chat' ),
             'welcome_bot'      => __( 'Olá! Sou o Aurora, seu copiloto digital. Como posso te ajudar hoje?', 'aurora-chat' ),
@@ -632,21 +665,29 @@ class Aurora_Chat_Plugin {
                     'statusIdle'   => $opts['status_idle'],
                     'statusResponding' => $opts['status_responding'],
                     'statusComplete'   => $opts['status_complete'],
+                    'statusOffline'    => $opts['status_offline'],
                     'welcomeTitle' => $opts['welcome_title'],
                     'welcomeSubtitle' => $opts['welcome_subtitle'],
                     'welcomeBot' => $opts['welcome_bot'],
                     'closeMessage' => $opts['close_message'],
+                    'charsLimit' => __( 'Sua mensagem excede o limite de %d caracteres. Por favor, reduza o texto.', 'aurora-chat' ),
                 ],
                 'brand' => [
                     'name'    => $site_name,
                     'initial' => $site_initial,
                     'icon'    => $site_icon_id,
                 ],
+                'agentStatus' => in_array( $opts['agent_status'], [ 'online', 'offline' ], true ) ? $opts['agent_status'] : 'online',
             ]
         );
 
-    $content = apply_filters( 'the_content', $template->post_content );
+    // Usar os arquivos de template para garantir que o CSS inline mais recente seja aplicado
     $layout  = get_post_meta( $template->ID, '_aurora_template_layout', true ) ?: 'session';
+    if ( 'bubble' === $layout ) {
+        $content = $this->get_bubble_template_markup();
+    } else {
+        $content = $this->get_session_template_markup();
+    }
 
         echo '<!DOCTYPE html><html ' . get_language_attributes() . '><head>';
         echo '<meta charset="' . esc_attr( get_bloginfo( 'charset' ) ) . '">';
@@ -676,10 +717,12 @@ class Aurora_Chat_Plugin {
             .aurora-area.bubble .card{position:relative;min-height:300px}
             .aurora-area.bubble .aurora-chat-container{position:fixed;bottom:18px;right:18px}
         </style>';
-        echo '</head><body>';
+    echo '</head><body>';
         echo '<header class="site"><div class="container">';
         echo '<div class="brand"><div class="logo"></div><span>' . esc_html( get_bloginfo( 'name' ) ) . '</span></div>';
-        echo '<nav><a href="#">' . esc_html__( 'Início', 'aurora-chat' ) . '</a><a href="#">' . esc_html__( 'Produtos', 'aurora-chat' ) . '</a><a href="#">' . esc_html__( 'Contato', 'aurora-chat' ) . '</a></nav>';
+    echo '<nav><a href="#">' . esc_html__( 'Início', 'aurora-chat' ) . '</a><a href="#">' . esc_html__( 'Produtos', 'aurora-chat' ) . '</a><a href="#">' . esc_html__( 'Contato', 'aurora-chat' ) . '</a>';
+    echo '<button id="aurora-theme-toggle" class="button" style="margin-left:12px">' . esc_html__( 'Tema: Claro/Escuro', 'aurora-chat' ) . '</button>';
+    echo '</nav>';
         echo '</div></header>';
 
         echo '<main class="aurora-chat-preview">';
@@ -688,11 +731,12 @@ class Aurora_Chat_Plugin {
         echo '<div class="card"><h2>' . esc_html__( 'Conteúdo de exemplo', 'aurora-chat' ) . '</h2><p>' . esc_html__( 'Texto ilustrativo para simular uma página real com blocos de conteúdo.', 'aurora-chat' ) . '</p><div class="placeholder" style="height:220px"></div></div>';
         echo '<div class="aurora-area ' . esc_attr( $layout === 'bubble' ? 'bubble' : 'session' ) . '">';
         echo '<div class="card"><h3>' . esc_html__( 'Área do Chat', 'aurora-chat' ) . '</h3>';
-        echo sprintf( '<div class="aurora-chat-container aurora-chat-layout-%s" data-agent="0" data-max-turns="0" data-send-form="0">%s</div>', esc_attr( $layout ), $content );
+    echo sprintf( '<div class="aurora-chat-container aurora-chat-layout-%s" data-agent="0" data-max-turns="0" data-send-form="0" data-max-chars="0">%s</div>', esc_attr( $layout ), $content );
         echo '</div></div>';
         echo '</section>';
         echo '</main>';
-        wp_footer();
+    echo '<script>document.addEventListener("DOMContentLoaded",function(){var t=document.getElementById("aurora-theme-toggle");if(!t)return;t.addEventListener("click",function(){document.body.classList.toggle("aurora-theme-dark");});});</script>';
+    wp_footer();
         echo '</body></html>';
         exit;
     }
@@ -711,6 +755,8 @@ class Aurora_Chat_Plugin {
             'status_idle'      => __( 'Online', 'aurora-chat' ),
             'status_responding'=> __( 'Respondendo…', 'aurora-chat' ),
             'status_complete'  => __( 'Resposta em %ss', 'aurora-chat' ),
+            'status_offline'   => __( 'Offline', 'aurora-chat' ),
+            'agent_status'     => 'online',
             'close_message'    => __( 'Atendimento encerrado com sucesso.', 'aurora-chat' ),
         ];
         $opts = wp_parse_args( is_array( $opts ) ? $opts : [], $defaults );
@@ -738,18 +784,29 @@ class Aurora_Chat_Plugin {
         echo '<tr><th><label for="limit_reached">' . esc_html__( 'Mensagem de limite atingido', 'aurora-chat' ) . '</label></th>';
         echo '<td><input type="text" class="regular-text" id="limit_reached" name="limit_reached" value="' . esc_attr( $opts['limit_reached'] ) . '" /></td></tr>';
 
-        echo '<tr><th>' . esc_html__( 'Textos de status', 'aurora-chat' ) . '</th>';
-        echo '<td>';
-        echo '<label>' . esc_html__( 'Parado/Disponível', 'aurora-chat' ) . '</label><br/>';
-        echo '<input type="text" class="regular-text" name="status_idle" value="' . esc_attr( $opts['status_idle'] ) . '" />';
-        echo '<p class="description">' . esc_html__( 'Ex.: "Online"', 'aurora-chat' ) . '</p><br/>';
-        echo '<label>' . esc_html__( 'Respondendo', 'aurora-chat' ) . '</label><br/>';
-        echo '<input type="text" class="regular-text" name="status_responding" value="' . esc_attr( $opts['status_responding'] ) . '" />';
-        echo '<p class="description">' . esc_html__( 'Ex.: "Respondendo…"', 'aurora-chat' ) . '</p><br/>';
-        echo '<label>' . esc_html__( 'Concluído', 'aurora-chat' ) . '</label><br/>';
-        echo '<input type="text" class="regular-text" name="status_complete" value="' . esc_attr( $opts['status_complete'] ) . '" />';
-        echo '<p class="description">' . esc_html__( 'Use %s para o tempo (segundos), ex.: "Resposta em %ss"', 'aurora-chat' ) . '</p>';
-        echo '</td></tr>';
+    echo '<tr><th>' . esc_html__( 'Status do agente', 'aurora-chat' ) . '</th>';
+    echo '<td>';
+    echo '<label for="agent_status">' . esc_html__( 'Disponibilidade atual', 'aurora-chat' ) . '</label><br/>';
+    echo '<select id="agent_status" name="agent_status">';
+    echo '<option value="online" ' . selected( $opts['agent_status'], 'online', false ) . '>' . esc_html__( 'Online (verde)', 'aurora-chat' ) . '</option>';
+    echo '<option value="offline" ' . selected( $opts['agent_status'], 'offline', false ) . '>' . esc_html__( 'Offline (vermelho)', 'aurora-chat' ) . '</option>';
+    echo '</select>';
+    echo '<p class="description">' . esc_html__( 'Define a cor do status exibido no chat.', 'aurora-chat' ) . '</p>';
+    echo '<hr/>';
+    echo '<label>' . esc_html__( 'Textos de status', 'aurora-chat' ) . '</label><br/>';
+    echo '<strong>' . esc_html__( 'Disponível', 'aurora-chat' ) . '</strong><br/>';
+    echo '<input type="text" class="regular-text" name="status_idle" value="' . esc_attr( $opts['status_idle'] ) . '" />';
+    echo '<p class="description">' . esc_html__( 'Ex.: "Online"', 'aurora-chat' ) . '</p><br/>';
+    echo '<strong>' . esc_html__( 'Offline', 'aurora-chat' ) . '</strong><br/>';
+    echo '<input type="text" class="regular-text" name="status_offline" value="' . esc_attr( $opts['status_offline'] ) . '" />';
+    echo '<p class="description">' . esc_html__( 'Ex.: "Offline"', 'aurora-chat' ) . '</p><br/>';
+    echo '<strong>' . esc_html__( 'Respondendo', 'aurora-chat' ) . '</strong><br/>';
+    echo '<input type="text" class="regular-text" name="status_responding" value="' . esc_attr( $opts['status_responding'] ) . '" />';
+    echo '<p class="description">' . esc_html__( 'Ex.: "Respondendo…"', 'aurora-chat' ) . '</p><br/>';
+    echo '<strong>' . esc_html__( 'Concluído', 'aurora-chat' ) . '</strong><br/>';
+    echo '<input type="text" class="regular-text" name="status_complete" value="' . esc_attr( $opts['status_complete'] ) . '" />';
+    echo '<p class="description">' . esc_html__( 'Use %s para o tempo (segundos), ex.: "Resposta em %ss"', 'aurora-chat' ) . '</p>';
+    echo '</td></tr>';
 
         echo '<tr><th><label for="close_message">' . esc_html__( 'Mensagem de encerramento', 'aurora-chat' ) . '</label></th>';
         echo '<td><input type="text" class="regular-text" id="close_message" name="close_message" value="' . esc_attr( $opts['close_message'] ) . '" /></td></tr>';
@@ -781,6 +838,7 @@ class Aurora_Chat_Plugin {
             self::META_MAX_TURNS,
             self::META_SEND_FORM,
             self::META_REMOTE_WEBHOOK,
+            self::META_MAX_INPUT_CHARS,
         ];
 
         foreach ( $fields as $field ) {
@@ -793,6 +851,9 @@ class Aurora_Chat_Plugin {
                     }
                 }
 
+                if ( in_array( $field, [ self::META_MAX_TURNS, self::META_MAX_INPUT_CHARS ], true ) ) {
+                    $value = absint( $value );
+                }
                 update_post_meta( $post_id, $field, $value );
             }
         }
@@ -859,9 +920,10 @@ class Aurora_Chat_Plugin {
         wp_nonce_field( 'aurora_agent_meta', 'aurora_agent_meta_nonce' );
 
     $remote_webhook = get_post_meta( $post->ID, self::META_REMOTE_WEBHOOK, true );
-        $template   = (int) get_post_meta( $post->ID, self::META_TEMPLATE_ID, true );
-        $max_turns  = (int) get_post_meta( $post->ID, self::META_MAX_TURNS, true );
-        $send_form  = (int) get_post_meta( $post->ID, self::META_SEND_FORM, true );
+    $template   = (int) get_post_meta( $post->ID, self::META_TEMPLATE_ID, true );
+    $max_turns  = (int) get_post_meta( $post->ID, self::META_MAX_TURNS, true );
+    $send_form  = (int) get_post_meta( $post->ID, self::META_SEND_FORM, true );
+    $max_chars  = (int) get_post_meta( $post->ID, self::META_MAX_INPUT_CHARS, true );
 
         $templates = get_posts(
             [
@@ -892,6 +954,10 @@ class Aurora_Chat_Plugin {
         echo '<tr><th><label for="' . esc_attr( self::META_MAX_TURNS ) . '">' . esc_html__( 'Limite de interações', 'aurora-chat' ) . '</label></th>';
         echo '<td><input type="number" name="' . esc_attr( self::META_MAX_TURNS ) . '" id="' . esc_attr( self::META_MAX_TURNS ) . '" value="' . esc_attr( $max_turns ) . '" class="small-text">';
         echo '<p class="description">' . esc_html__( '0 ou vazio = sem limite.', 'aurora-chat' ) . '</p></td></tr>';
+
+    echo '<tr><th><label for="' . esc_attr( self::META_MAX_INPUT_CHARS ) . '">' . esc_html__( 'Limite de caracteres por mensagem', 'aurora-chat' ) . '</label></th>';
+    echo '<td><input type="number" name="' . esc_attr( self::META_MAX_INPUT_CHARS ) . '" id="' . esc_attr( self::META_MAX_INPUT_CHARS ) . '" value="' . esc_attr( $max_chars ) . '" class="small-text">';
+    echo '<p class="description">' . esc_html__( '0 ou vazio = sem limite. Mensagens do usuário serão cortadas para esse tamanho antes do envio.', 'aurora-chat' ) . '</p></td></tr>';
 
         echo '<tr><th><label for="' . esc_attr( self::META_SEND_FORM ) . '">' . esc_html__( 'Enviar formulário de atendimento', 'aurora-chat' ) . '</label></th>';
         echo '<td><select name="' . esc_attr( self::META_SEND_FORM ) . '" id="' . esc_attr( self::META_SEND_FORM ) . '">';
@@ -962,8 +1028,15 @@ class Aurora_Chat_Plugin {
 
     $remote_webhook = get_post_meta( $agent_id, self::META_REMOTE_WEBHOOK, true );
 
-        $response_text = '';
-        $attachments = [];
+        // Enforce character limit per message for this agent
+        $max_chars = (int) get_post_meta( $agent_id, self::META_MAX_INPUT_CHARS, true );
+        if ( $max_chars > 0 ) {
+            $message = $this->truncate_text_limit( $message, $max_chars );
+        }
+
+    $response_text = '';
+    $attachments = [];
+    $audio_payload = [];
 
         // Usar apenas a URL completa do Webhook do Sistema Aurora
         if ( $remote_webhook ) {
@@ -1003,6 +1076,22 @@ class Aurora_Chat_Plugin {
                     if ( ! empty( $data['anexos'] ) && is_array( $data['anexos'] ) ) {
                         $attachments = array_values( array_filter( array_map( 'esc_url_raw', $data['anexos'] ) ) );
                     }
+                    // Suporte a áudio retornado pelo agente: URL direta ou base64 + content-type
+                    if ( ! empty( $data['audio_url'] ) && is_string( $data['audio_url'] ) ) {
+                        $audio_payload = [
+                            'src'  => esc_url_raw( $data['audio_url'] ),
+                            'type' => isset( $data['audio_content_type'] ) ? sanitize_text_field( $data['audio_content_type'] ) : '',
+                            'kind' => 'url',
+                        ];
+                    } elseif ( ! empty( $data['audio'] ) && is_string( $data['audio'] ) ) {
+                        $ctype = isset( $data['audio_content_type'] ) ? sanitize_text_field( $data['audio_content_type'] ) : 'audio/mpeg';
+                        // Não concatenamos o data URL aqui; deixamos para o front montar para reduzir payload duplicado
+                        $audio_payload = [
+                            'base64' => $data['audio'],
+                            'type'   => $ctype,
+                            'kind'   => 'base64',
+                        ];
+                    }
                 } else {
                     // Tenta expor mensagem de erro da API para facilitar o diagnóstico no chat
                     if ( is_array( $data ) && ! empty( $data['error'] ) ) {
@@ -1015,15 +1104,82 @@ class Aurora_Chat_Plugin {
             error_log( '[Aurora Chat] Webhook não configurado para o agente ' . $agent_id );
         }
 
+        // Se não há texto, só mostramos mensagem de erro quando também não houver áudio nem anexos
         if ( empty( $response_text ) ) {
-            $opts = get_option( 'aurora_chat_messages', [] );
-            $fallback = is_array($opts) && !empty($opts['error_default']) ? $opts['error_default'] : __( 'Olá! Sou o assistente Aurora. Em breve terei uma resposta personalizada para você.', 'aurora-chat' );
-            $response_text = $fallback;
+            if ( ! empty( $audio_payload ) || ! empty( $attachments ) ) {
+                $response_text = '';
+            } else {
+                $opts = get_option( 'aurora_chat_messages', [] );
+                $fallback = is_array( $opts ) && ! empty( $opts['error_default'] ) ? $opts['error_default'] : __( 'Não foi possível obter resposta no momento. Tente novamente mais tarde.', 'aurora-chat' );
+                $response_text = $fallback;
+            }
         }
 
-        $this->store_message( $agent_id, $session, $message, $response_text );
+    $this->store_message( $agent_id, $session, $message, $response_text );
 
-    wp_send_json_success( [ 'reply' => $response_text, 'session' => $session, 'attachments' => $attachments ] );
+    wp_send_json_success( [ 'reply' => $response_text, 'session' => $session, 'attachments' => $attachments, 'audio' => $audio_payload ] );
+    }
+
+    /**
+     * Lida com envio de áudio (base64) para o webhook remoto para transcrição.
+     * Retorna apenas a transcrição e não cria histórico local.
+     */
+    public function handle_ajax_audio() {
+        check_ajax_referer( 'aurora_chat_nonce', 'nonce' );
+
+        $agent_id = isset( $_POST['agentId'] ) ? absint( $_POST['agentId'] ) : 0;
+        $audio_b64 = isset( $_POST['audio'] ) ? wp_unslash( $_POST['audio'] ) : '';
+        $session  = isset( $_POST['session'] ) ? sanitize_key( wp_unslash( $_POST['session'] ) ) : wp_generate_uuid4();
+        $user_name = isset($_POST['userName']) ? sanitize_text_field( wp_unslash( $_POST['userName'] ) ) : '';
+        $user_email = isset($_POST['userEmail']) ? sanitize_email( wp_unslash( $_POST['userEmail'] ) ) : '';
+        $user_contact = isset($_POST['userContact']) ? sanitize_text_field( wp_unslash( $_POST['userContact'] ) ) : '';
+
+        if ( ! $agent_id || empty( $audio_b64 ) ) {
+            wp_send_json_error( [ 'message' => __( 'Requisição inválida (áudio ausente).', 'aurora-chat' ) ] );
+        }
+
+        $remote_webhook = get_post_meta( $agent_id, self::META_REMOTE_WEBHOOK, true );
+        if ( ! $remote_webhook ) {
+            wp_send_json_error( [ 'message' => __( 'Webhook remoto não configurado para este agente.', 'aurora-chat' ) ] );
+        }
+
+        // Origin header precisa ser scheme://host[:port]
+        $home = home_url();
+        $scheme = wp_parse_url( $home, PHP_URL_SCHEME ) ?: 'https';
+        $host = wp_parse_url( $home, PHP_URL_HOST ) ?: 'localhost';
+        $port = wp_parse_url( $home, PHP_URL_PORT );
+        $origin = $scheme . '://' . $host . ( $port ? ':' . $port : '' );
+
+        $payload = [
+            'protocolo' => $session,
+            'audio'     => $audio_b64,
+            'origem'    => $origin,
+        ];
+        if ( $user_name )   { $payload['nome_usuario'] = $user_name; }
+        if ( $user_email )  { $payload['email'] = $user_email; }
+        if ( $user_contact ){ $payload['contato'] = $user_contact; }
+
+        $args = [
+            'headers' => [ 'Content-Type' => 'application/json', 'Origin' => $origin ],
+            'body'    => wp_json_encode( $payload ),
+            'timeout' => 45,
+        ];
+
+        $response = wp_remote_post( $remote_webhook, $args );
+        if ( is_wp_error( $response ) ) {
+            wp_send_json_error( [ 'message' => $response->get_error_message() ] );
+        }
+
+        $code = wp_remote_retrieve_response_code( $response );
+        $data = json_decode( wp_remote_retrieve_body( $response ), true );
+
+        if ( 200 !== $code || ! is_array( $data ) ) {
+            $msg = is_array($data) && isset($data['error']) ? (string) $data['error'] : __( 'Falha na transcrição de áudio.', 'aurora-chat' );
+            wp_send_json_error( [ 'message' => $msg ] );
+        }
+
+        $transcript = isset( $data['audio_transcrito'] ) ? (string) $data['audio_transcrito'] : '';
+        wp_send_json_success( [ 'transcript' => $transcript, 'session' => $session ] );
     }
 
     /**
@@ -1040,7 +1196,7 @@ class Aurora_Chat_Plugin {
             wp_die( __( 'Ação não autorizada.', 'aurora-chat' ) );
         }
 
-        $fields = [ 'welcome_title', 'welcome_subtitle', 'welcome_bot', 'error_default', 'limit_reached', 'status_idle', 'status_responding', 'status_complete', 'close_message' ];
+        $fields = [ 'welcome_title', 'welcome_subtitle', 'welcome_bot', 'error_default', 'limit_reached', 'status_idle', 'status_offline', 'status_responding', 'status_complete', 'agent_status', 'close_message' ];
         $opts = [];
         foreach ( $fields as $f ) {
             if ( isset( $_POST[ $f ] ) ) {
@@ -1102,19 +1258,31 @@ class Aurora_Chat_Plugin {
         $template_id = (int) get_post_meta( $agent_id, self::META_TEMPLATE_ID, true );
         $template    = $template_id ? get_post( $template_id ) : null;
 
-        $max_turns = (int) get_post_meta( $agent_id, self::META_MAX_TURNS, true );
-        $send_form = (int) get_post_meta( $agent_id, self::META_SEND_FORM, true );
+    $max_turns = (int) get_post_meta( $agent_id, self::META_MAX_TURNS, true );
+    $send_form = (int) get_post_meta( $agent_id, self::META_SEND_FORM, true );
+    $max_chars = (int) get_post_meta( $agent_id, self::META_MAX_INPUT_CHARS, true );
 
         $layout = $template ? get_post_meta( $template_id, '_aurora_template_layout', true ) : 'session';
 
+        $agent_name = get_the_title( $agent_id );
         $data_attrs = sprintf(
-            'data-agent="%d" data-max-turns="%d" data-send-form="%d"',
+            'data-agent="%d" data-max-turns="%d" data-send-form="%d" data-max-chars="%d" data-agent-name="%s"',
             esc_attr( $agent_id ),
             esc_attr( $max_turns ),
-            esc_attr( $send_form )
+            esc_attr( $send_form ),
+            esc_attr( $max_chars ),
+            esc_attr( $agent_name )
         );
 
-        $content = $template ? apply_filters( 'the_content', $template->post_content ) : '<p>' . esc_html__( 'Template não configurado.', 'aurora-chat' ) . '</p>';
+        // Renderiza a partir dos arquivos de template para garantir estilos inline atualizados
+        // Mantém fallback para conteúdo do CPT apenas se for um layout personalizado
+        if ( 'session' === $layout ) {
+            $content = $this->get_session_template_markup();
+        } elseif ( 'bubble' === $layout ) {
+            $content = $this->get_bubble_template_markup();
+        } else {
+            $content = $template ? apply_filters( 'the_content', $template->post_content ) : $this->get_session_template_markup();
+        }
 
         return sprintf(
             '<div class="aurora-chat-container aurora-chat-layout-%s" %s>%s</div>',
@@ -1263,5 +1431,29 @@ class Aurora_Chat_Plugin {
         ob_start();
         include AURORA_CHAT_DIR . 'templates/bubble.php';
         return ob_get_clean();
+    }
+
+    /**
+     * Corta o texto para o limite de caracteres informado (suporta mb_* quando disponível).
+     *
+     * @param string $text
+     * @param int $limit
+     * @return string
+     */
+    protected function truncate_text_limit( $text, $limit ) {
+        $limit = absint( $limit );
+        if ( $limit <= 0 ) {
+            return $text;
+        }
+        if ( function_exists( 'mb_strlen' ) && function_exists( 'mb_substr' ) ) {
+            if ( mb_strlen( $text ) > $limit ) {
+                return mb_substr( $text, 0, $limit );
+            }
+            return $text;
+        }
+        if ( strlen( $text ) > $limit ) {
+            return substr( $text, 0, $limit );
+        }
+        return $text;
     }
 }

@@ -15,7 +15,7 @@
                     <span class="aurora-bubble__brand-status" data-aurora-role="status">Online</span>
                 </div>
             </div>
-            <button class="aurora-bubble__close" type="button" aria-label="Fechar chat">×</button>
+            <button type="button" class="aurora-theme-toggle-btn" data-aurora-role="theme-toggle" aria-label="Alternar tema" title="Alternar tema">🌓</button>
         </header>
 
         <section class="aurora-bubble__welcome" data-aurora-role="welcome">
@@ -34,12 +34,22 @@
 
     <form class="aurora-bubble__composer" data-aurora-role="composer" hidden>
             <label class="screen-reader-text" for="aurora-bubble-input">Mensagem</label>
-            <input id="aurora-bubble-input" class="aurora-bubble__input" type="text" autocomplete="off" placeholder="Digite sua mensagem" required />
-            <button type="submit" class="aurora-bubble__send" data-aurora-role="send" aria-label="Enviar mensagem">
-                <span aria-hidden="true">➤</span>
-            </button>
+            <div class="aurora-input-group">
+                <input id="aurora-bubble-input" class="aurora-bubble__input" type="text" autocomplete="off" placeholder="Digite sua mensagem" required />
+                <div class="aurora-actions">
+                    <button type="button" class="aurora-bubble__mic" data-aurora-role="mic" aria-label="Gravar mensagem de voz" title="Gravar mensagem de voz">
+                        <span aria-hidden="true">🎤</span>
+                    </button>
+                    <button type="submit" class="aurora-bubble__send" data-aurora-role="send" aria-label="Enviar mensagem">
+                        <span aria-hidden="true">➤</span>
+                    </button>
+                </div>
+            </div>
         </form>
 
-        <div class="aurora-bubble__footer" data-aurora-role="footer"></div>
+        <div class="aurora-bubble__limit" data-aurora-role="char-limit" aria-live="polite" hidden></div>
+
+        <div class="aurora-bubble__footer" data-aurora-role="footer"><small>Feito por Aurora Tecnologia e Inovação</small></div>
+        <div class="aurora-toast-container" data-aurora-role="toast-container"></div>
     </div>
 </div>

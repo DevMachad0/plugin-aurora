@@ -1,0 +1,61 @@
+/* Aurora Chat – Tema escuro (aplicado quando existe a classe .aurora-theme-dark em um ancestral) */
+
+.aurora-theme-dark {
+  color-scheme: dark;
+}
+
+.aurora-theme-dark .aurora-chat-container {
+  --aurora-color-primary: #7c3aed;
+  --aurora-color-primary-accent: #06b6d4;
+  --aurora-color-primary-gradient: linear-gradient(135deg,var(--aurora-color-primary),var(--aurora-color-primary-accent));
+
+  --aurora-color-bg: #111827;
+  --aurora-color-surface: #0b1220;
+  --aurora-color-soft-bg: #0f172a;
+  --aurora-color-soft-alt: #111827;
+  --aurora-color-border: #1f2937;
+  --aurora-color-border-strong: #334155;
+  --aurora-color-text: #e5e7eb;
+  --aurora-color-text-soft: #cbd5e1;
+  --aurora-color-muted: #94a3b8;
+  --aurora-color-focus: #22d3ee;
+  --aurora-color-danger: #f87171;
+  --aurora-color-success: #34d399;
+
+  --aurora-chat-bot-bg: #0b1220;
+  --aurora-chat-bot-text: #e2e8f0;
+  --aurora-chat-user-text: #ffffff;
+}
+
+/* Bubble tweaks no dark */
+.aurora-theme-dark .aurora-bubble__panel { background: var(--aurora-color-bg); border-color: var(--aurora-color-border); }
+.aurora-theme-dark .aurora-bubble__header { background: var(--aurora-color-soft-bg); border-color: var(--aurora-color-border); }
+.aurora-theme-dark .aurora-bubble__close { color: var(--aurora-color-text-soft); }
+.aurora-theme-dark .aurora-bubble__welcome { background: var(--aurora-color-bg); border-color: var(--aurora-color-border); }
+.aurora-theme-dark .aurora-bubble__thread { background: var(--aurora-color-soft-bg); }
+.aurora-theme-dark .aurora-bubble__composer { background: var(--aurora-color-bg); border-color: var(--aurora-color-border); }
+.aurora-theme-dark .aurora-bubble__input { color: var(--aurora-color-text); }
+.aurora-theme-dark .aurora-bubble__send { background:#334155; color:#fff; }
+.aurora-theme-dark .aurora-bubble__mic { background:#111827; border-color:#1f2937; color:#cbd5e1; }
+
+/* Sessão tweaks no dark (muito baseado em tokens) */
+.aurora-theme-dark .aurora-session { background: var(--aurora-color-bg); border-color: var(--aurora-color-border); }
+.aurora-theme-dark .aurora-session__header { background: linear-gradient(180deg, var(--aurora-color-soft-bg), transparent 85%), var(--aurora-color-bg); border-color: var(--aurora-color-border); }
+.aurora-theme-dark .aurora-session__messages { background: var(--aurora-color-soft-bg); border-color: var(--aurora-color-border); }
+.aurora-theme-dark .aurora-session__bubble { background: var(--aurora-chat-bot-bg); color: var(--aurora-chat-bot-text); }
+.aurora-theme-dark .aurora-session__message.is-user .aurora-session__bubble { color: var(--aurora-chat-user-text); }
+.aurora-theme-dark .aurora-session__composer { background: var(--aurora-color-bg); }
+.aurora-theme-dark .aurora-input-group { background:#0b1220; border-color: var(--aurora-color-border-strong); }
+.aurora-theme-dark .aurora-session__input { color: var(--aurora-color-text); }
+.aurora-theme-dark .aurora-session__mic, .aurora-theme-dark .aurora-session__send { background:#334155; color:#fff; }
+.aurora-theme-dark .aurora-session__status { background:#0b1220; border-color:#1f2937; }
+
+/* Modal dark */
+.aurora-theme-dark .aurora-modal__dialog { background: var(--aurora-color-bg, #0b1220); color: var(--aurora-color-text, #e5e7eb); }
+.aurora-theme-dark .aurora-modal__header { background: var(--aurora-color-soft-bg, #0f172a); border-color: var(--aurora-color-border, #1f2937); }
+.aurora-theme-dark .aurora-modal__content { background: #000; }
+.aurora-theme-dark .aurora-zoombtn { background: rgba(255,255,255,.12); color:#fff; }
+
+/* Toast dark */
+.aurora-theme-dark .aurora-toast { background:#111827; color:#fff; }
+.aurora-theme-dark .aurora-toast.is-error { background:#7f1d1d; }

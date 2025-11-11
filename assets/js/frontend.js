@@ -58,6 +58,40 @@
         return article;
     };
 
+    const createAudioMessage = (layout, src, type) => {
+        const article = document.createElement('article');
+        const prefix = layout === 'session' ? 'aurora-session' : 'aurora-bubble';
+        article.className = `${prefix}__message is-bot`;
+        const bubble = document.createElement('div');
+        bubble.className = `${prefix}__bubble`;
+        const audio = document.createElement('audio');
+        audio.className = 'aurora-audio-player';
+        audio.controls = true;
+        audio.preload = 'none';
+        try {
+            if (src && /^data:audio\//.test(src)) {
+                audio.src = src;
+            } else if (src) {
+                // URL
+                audio.src = src;
+                audio.crossOrigin = 'anonymous';
+            }
+            if (type) {
+                // some browsers use the type on <source>, but <audio type> is fine to hint
+                audio.setAttribute('type', type);
+            }
+        } catch(e) { /* no-op */ }
+        bubble.appendChild(audio);
+        article.appendChild(bubble);
+        if (layout === 'session') {
+            const ts = document.createElement('span');
+            ts.className = 'aurora-session__timestamp';
+            ts.textContent = formatTime();
+            article.appendChild(ts);
+        }
+        return article;
+    };
+
     const scrollToBottom = (element) => {
         element.scrollTop = element.scrollHeight;
     };
@@ -392,6 +426,71 @@
         return { openURL, close };
     })();
 
+    // ============== Toast / Popup de notificação ==============
+    const AuroraToast = (() => {
+        let globalContainer = null, styled = false;
+        const ensure = (scopedRoot) => {
+            if (!styled) {
+                const style = document.createElement('style');
+                style.textContent = `
+                .aurora-toast-container{position:fixed;right:16px;bottom:16px;z-index:100000;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+                .aurora-toast{background:#111827;color:#fff;border-radius:10px;padding:12px 14px;box-shadow:0 10px 25px rgba(0,0,0,.25);max-width:360px;min-width:240px;pointer-events:auto;display:grid;grid-template-columns:auto 1fr auto;align-items:start;gap:10px}
+                .aurora-toast.is-error{background:#991b1b}
+                .aurora-toast__icon{font-size:16px;line-height:1.1;margin-top:2px}
+                .aurora-toast__body{display:block}
+                .aurora-toast__title{margin:0 0 2px;font-size:13px;font-weight:700}
+                .aurora-toast__text{margin:0;font-size:12px;opacity:.95}
+                .aurora-toast__close{border:0;background:transparent;color:#fff;opacity:.9;cursor:pointer;font-size:16px;line-height:1;padding:2px}
+                .aurora-toast__close:hover{opacity:1}
+                `;
+                document.head.appendChild(style);
+                styled = true;
+            }
+            // Preferir um container fornecido dentro do escopo do chat
+            if (scopedRoot) {
+                let c = scopedRoot.querySelector('[data-aurora-role="toast-container"]');
+                if (c) {
+                    // ajustar posicionamento local (não fixed) se desejar; manter fixed por consistência
+                    c.classList.add('aurora-toast-container');
+                    return c;
+                }
+            }
+            if (!globalContainer) {
+                globalContainer = document.createElement('div');
+                globalContainer.className = 'aurora-toast-container';
+                document.body.appendChild(globalContainer);
+            }
+            return globalContainer;
+        };
+        const show = (message, type = 'info', title, scopedRoot) => {
+            const root = ensure(scopedRoot);
+            const el = document.createElement('div');
+            el.className = 'aurora-toast' + (type === 'error' ? ' is-error' : '');
+            const icon = document.createElement('div');
+            icon.className = 'aurora-toast__icon';
+            icon.textContent = type === 'error' ? '⚠️' : 'ℹ️';
+            const body = document.createElement('div');
+            body.className = 'aurora-toast__body';
+            const h = document.createElement('div');
+            h.className = 'aurora-toast__title';
+            h.textContent = title || (type === 'error' ? 'Atenção' : 'Informação');
+            const p = document.createElement('div');
+            p.className = 'aurora-toast__text';
+            p.textContent = String(message || '');
+            body.appendChild(h); body.appendChild(p);
+            const close = document.createElement('button');
+            close.className = 'aurora-toast__close';
+            close.setAttribute('aria-label','Fechar');
+            close.textContent = '×';
+            close.addEventListener('click', () => { try { el.remove(); } catch(_){} });
+            el.appendChild(icon); el.appendChild(body); el.appendChild(close);
+            root.appendChild(el);
+            setTimeout(() => { try { el.remove(); } catch(_){} }, 4500);
+            return el;
+        };
+        return { show };
+    })();
+
     const isImageURL = (url) => /\.(png|jpe?g|gif|bmp|webp|svg)(\?.*)?$/i.test(url);
 
     const sendRequest = async (agentId, message, session, userMeta) => {
@@ -425,6 +524,32 @@
         return data.data;
     };
 
+    // Envia áudio base64 para transcrição no webhook remoto via AJAX WordPress
+    const sendAudio = async (agentId, audioBase64, session, userMeta) => {
+        const payload = new FormData();
+        payload.append('action', 'aurora_chat_send_audio');
+        payload.append('nonce', AuroraChatConfig.nonce);
+        payload.append('agentId', agentId);
+        payload.append('audio', audioBase64);
+        payload.append('session', session);
+        if (userMeta && typeof userMeta === 'object') {
+            if (userMeta.name) payload.append('userName', userMeta.name);
+            if (userMeta.email) payload.append('userEmail', userMeta.email);
+            if (userMeta.contact) payload.append('userContact', userMeta.contact);
+        }
+
+        const response = await fetch(AuroraChatConfig.ajaxUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            body: payload,
+        });
+
+        if (!response.ok) throw new Error('Request error');
+        const data = await response.json();
+        if (!data.success) throw new Error(data.data && data.data.message ? data.data.message : 'Unknown error');
+        return data.data;
+    };
+
     const initChat = (container) => {
     const layout = container.classList.contains('aurora-chat-layout-session') ? 'session' : 'bubble';
     const messages = container.querySelector('[data-aurora-role="messages"]');
@@ -433,10 +558,12 @@
         const overlay = container.querySelector('[data-aurora-role="overlay"]');
         const welcome = container.querySelector('[data-aurora-role="welcome"]');
         const startButton = container.querySelector('[data-aurora-role="start"]');
-        const statusEl = container.querySelector('[data-aurora-role="status"]');
-        // Popular avatar/brand com ícone do site ou inicial
+    const statusEl = container.querySelector('[data-aurora-role="status"]');
+    let micBtn = container.querySelector('[data-aurora-role="mic"]');
+        // Popular avatar/brand com ícone do site ou inicial e nome do agente
         try {
             const brand = (typeof AuroraChatConfig !== 'undefined' && AuroraChatConfig.brand) ? AuroraChatConfig.brand : null;
+            const agentName = container.dataset.agentName || '';
             if (brand) {
                 if (layout === 'session') {
                     const avatar = container.querySelector('.aurora-session__avatar');
@@ -450,6 +577,11 @@
                             avatar.textContent = brand.initial;
                         }
                     }
+                    // Atualiza o título com o nome do agente (se houver)
+                    if (agentName) {
+                        const titleEl = container.querySelector('.aurora-session__title');
+                        if (titleEl) titleEl.textContent = agentName;
+                    }
                 } else {
                     const brandIcon = container.querySelector('.aurora-bubble__brand-icon');
                     if (brandIcon) {
@@ -461,6 +593,11 @@
                             brandIcon.style.background = '';
                             brandIcon.textContent = brand.initial;
                         }
+                    }
+                    // Atualiza o nome de marca com o nome do agente (se houver)
+                    if (agentName) {
+                        const nameEl = container.querySelector('.aurora-bubble__brand-name');
+                        if (nameEl) nameEl.textContent = agentName;
                     }
                 }
             }
@@ -476,11 +613,53 @@
             return;
         }
 
+        // ======= Tema: alternância claro/escuro =======
+        const THEME_KEY = 'aurora-theme';
+        const getTheme = () => {
+            try { return localStorage.getItem(THEME_KEY) || 'light'; } catch(_) { return 'light'; }
+        };
+        const setTheme = (theme) => {
+            try { localStorage.setItem(THEME_KEY, theme); } catch(_) {}
+        };
+        const applyTheme = (theme) => {
+            const dark = theme === 'dark';
+            document.body.classList.toggle('aurora-theme-dark', dark);
+            // atualiza ícone dos botões disponíveis neste container
+            container.querySelectorAll('[data-aurora-role="theme-toggle"]').forEach((btn) => {
+                btn.textContent = dark ? '☀' : '🌓';
+                btn.setAttribute('aria-label', dark ? 'Alternar para tema claro' : 'Alternar para tema escuro');
+                btn.setAttribute('title', dark ? 'Alternar para tema claro' : 'Alternar para tema escuro');
+            });
+        };
+        // aplicar tema salvo ao iniciar
+        applyTheme(getTheme());
+        // listeners de clique dos botões
+        container.querySelectorAll('[data-aurora-role="theme-toggle"]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const next = getTheme() === 'dark' ? 'light' : 'dark';
+                setTheme(next);
+                applyTheme(next);
+            });
+        });
+
         const generateSession = () => {
             if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
                 return crypto.randomUUID();
             }
             return `aurora-${Math.random().toString(16).slice(2)}${Date.now()}`;
+        };
+
+        const applyStatusAppearance = (state) => {
+            if (!statusEl) return;
+            try {
+                statusEl.classList.remove('is-online','is-offline');
+                const s = (state || '').toLowerCase();
+                if (s === 'offline') statusEl.classList.add('is-offline');
+                else statusEl.classList.add('is-online');
+                // Ajusta também uma classe no container para CSS global se necessário
+                container.classList.remove('aurora-status-online','aurora-status-offline');
+                container.classList.add(s === 'offline' ? 'aurora-status-offline' : 'aurora-status-online');
+            } catch(_){}
         };
 
         const setStatus = (() => {
@@ -498,20 +677,295 @@
                 switch (mode) {
                     case 'responding':
                         statusEl.textContent = AuroraChatConfig.i18n.statusResponding || 'Respondendo…';
+                        applyStatusAppearance('online');
+                        break;
+                    case 'transcribing':
+                        statusEl.textContent = (AuroraChatConfig.i18n && AuroraChatConfig.i18n.statusTranscribing) || 'Transcrevendo…';
+                        applyStatusAppearance('online');
                         break;
                     case 'complete':
                         statusEl.textContent = (AuroraChatConfig.i18n.statusComplete || 'Resposta em %ss').replace('%s', value || '1.0');
                         timer = setTimeout(() => setStatus('idle'), 2500);
+                        applyStatusAppearance('online');
                         break;
                     case 'idle':
                     default:
-                        statusEl.textContent = AuroraChatConfig.i18n.statusIdle || 'Online';
+                        // Se o admin marcou offline, exibimos o texto Offline; senão, Online
+                        if (AuroraChatConfig && AuroraChatConfig.agentStatus === 'offline') {
+                            statusEl.textContent = (AuroraChatConfig.i18n && AuroraChatConfig.i18n.statusOffline) || 'Offline';
+                            applyStatusAppearance('offline');
+                        } else {
+                            statusEl.textContent = AuroraChatConfig.i18n.statusIdle || 'Online';
+                            applyStatusAppearance('online');
+                        }
                         break;
                 }
             };
         })();
 
-        setStatus('idle');
+    setStatus('idle');
+
+        // Garante presença do botão de microfone mesmo em templates antigos salvos no banco
+        if (!micBtn && composer) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = layout === 'session' ? 'aurora-session__mic' : 'aurora-bubble__mic';
+            btn.setAttribute('data-aurora-role', 'mic');
+            btn.setAttribute('aria-label', 'Gravar mensagem de voz');
+            btn.title = 'Gravar mensagem de voz';
+            btn.innerHTML = '<span aria-hidden="true">🎤</span>';
+
+            if (layout === 'session') {
+                const toolbar = composer.querySelector('.aurora-session__toolbar') || composer;
+                const sendBtn = toolbar.querySelector('[data-aurora-role="send"]');
+                if (sendBtn && sendBtn.parentNode) {
+                    sendBtn.parentNode.insertBefore(btn, sendBtn);
+                } else {
+                    toolbar.appendChild(btn);
+                }
+            } else {
+                const sendBtn = composer.querySelector('[data-aurora-role="send"]');
+                if (sendBtn && sendBtn.parentNode) {
+                    sendBtn.parentNode.insertBefore(btn, sendBtn);
+                } else {
+                    composer.appendChild(btn);
+                }
+            }
+            micBtn = btn;
+        }
+
+        // ======= Áudio: gravação estilo WhatsApp =======
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let isRecording = false;
+        let isTranscribing = false;
+        let cancelRecording = false;
+
+        const disableComposer = (flag) => {
+            try {
+                input.disabled = !!flag;
+                const sendBtn = container.querySelector('[data-aurora-role="send"]');
+                if (sendBtn) sendBtn.disabled = !!flag;
+                if (micBtn) micBtn.disabled = !!flag; // bloqueia mic tanto gravando quanto transcrevendo
+            } catch(e){}
+        };
+
+        const buildRecordingUI = () => {
+            const wrap = document.createElement('div');
+            wrap.className = layout === 'session' ? 'aurora-session__recording' : 'aurora-bubble__recording';
+            wrap.setAttribute('role','status');
+            wrap.setAttribute('aria-live','polite');
+
+            const wave = document.createElement('div');
+            wave.className = 'aurora-voice-wave';
+            for (let i=0;i<8;i++){ const bar=document.createElement('span'); wave.appendChild(bar); }
+
+            const timer = document.createElement('span');
+            timer.className = 'aurora-rec-timer';
+            timer.textContent = '00:00';
+
+            const actions = document.createElement('div');
+            actions.className = 'aurora-rec-actions';
+
+            const btnCancel = document.createElement('button');
+            btnCancel.type = 'button'; btnCancel.className = 'aurora-rec-btn aurora-rec-cancel'; btnCancel.textContent = 'Cancelar';
+            const btnSend = document.createElement('button');
+            btnSend.type = 'button'; btnSend.className = 'aurora-rec-btn aurora-rec-send'; btnSend.textContent = 'Enviar';
+
+            actions.appendChild(btnCancel); actions.appendChild(btnSend);
+            wrap.appendChild(wave); wrap.appendChild(timer); wrap.appendChild(actions);
+
+            return { wrap, timer, btnCancel, btnSend };
+        };
+
+        const Recording = { ui: null, timerId: null, startTs: 0 };
+
+        const mountRecordingUI = () => {
+            if (Recording.ui) return Recording.ui;
+            const ui = buildRecordingUI();
+            const composer = container.querySelector('[data-aurora-role="composer"]');
+            if (composer) composer.parentNode.insertBefore(ui.wrap, composer);
+            Recording.ui = ui;
+            let secs = 0;
+            Recording.startTs = Date.now();
+            Recording.timerId = setInterval(() => {
+                secs = Math.floor((Date.now()-Recording.startTs)/1000);
+                const mm = String(Math.floor(secs/60)).padStart(2,'0');
+                const ss = String(secs%60).padStart(2,'0');
+                ui.timer.textContent = `${mm}:${ss}`;
+            }, 500);
+            ui.btnCancel.addEventListener('click', () => { cancelRecording = true; try { mediaRecorder && mediaRecorder.stop(); } catch(_){} });
+            ui.btnSend.addEventListener('click', () => { cancelRecording = false; try { mediaRecorder && mediaRecorder.stop(); } catch(_){} });
+            return ui;
+        };
+
+        const unmountRecordingUI = () => {
+            if (Recording.timerId) { clearInterval(Recording.timerId); Recording.timerId = null; }
+            const ui = Recording.ui; Recording.ui = null;
+            if (ui && ui.wrap && ui.wrap.parentNode) ui.wrap.remove();
+        };
+
+        const readBlobAsBase64 = (blob) => new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(String(reader.result).split(',')[1] || '');
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+        });
+
+    const startRecording = async () => {
+            if (isRecording || isSending) return;
+            ensureStarted();
+            isRecording = true; cancelRecording = false; audioChunks = [];
+            setStatus('responding'); // ou estado próprio visual
+            disableComposer(true);
+            input.value = '';
+            input.setAttribute('placeholder','Gravando…');
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+            } catch (err) {
+                isRecording = false; disableComposer(false); setStatus('idle');
+                AuroraToast.show('Permissão de microfone negada ou não disponível.', 'error', 'Microfone', container);
+                return;
+            }
+
+            const recUI = mountRecordingUI();
+            if (micBtn) micBtn.setAttribute('data-aurora-recording','true');
+            mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) audioChunks.push(e.data); };
+            mediaRecorder.onstop = async () => {
+                const blob = new Blob(audioChunks, { type: 'audio/webm' });
+                // Encerrar tracks
+                try { mediaRecorder.stream.getTracks().forEach(t => t.stop()); } catch(_){}
+                unmountRecordingUI();
+                isRecording = false;
+                if (micBtn) micBtn.removeAttribute('data-aurora-recording');
+                if (cancelRecording || blob.size === 0) {
+                    disableComposer(false); setStatus('idle'); input.setAttribute('placeholder','Digite sua mensagem'); return;
+                }
+                // Transcrever
+                isTranscribing = true; setStatus('transcribing');
+                try {
+                    const b64 = await readBlobAsBase64(blob);
+                    const { transcript, session } = await sendAudio(agentId, b64, sessionId, prechatData);
+                    // Não adicionar na thread; apenas preencher o input com a transcrição.
+                    if (transcript) {
+                        input.value = transcript;
+                    }
+                    setStatus('idle');
+                } catch (e) {
+                    console.error('[Aurora Chat][audio]', e);
+                    AuroraToast.show('Falha ao transcrever áudio.', 'error', 'Transcrição', container);
+                    setStatus('idle');
+                } finally {
+                    isTranscribing = false; disableComposer(false);
+                }
+            };
+            mediaRecorder.start(250);
+        };
+
+        if (micBtn) {
+            micBtn.addEventListener('click', () => { startRecording(); });
+        }
+
+        // Limite de caracteres por mensagem (data-max-chars)
+        const maxChars = parseInt(container.dataset.maxChars || '0', 10);
+        let limitEl = container.querySelector('[data-aurora-role="char-limit"]');
+        // Se o elemento do contador não existir no HTML do template, criamos dinamicamente
+        if (maxChars > 0 && !limitEl) {
+            if (layout === 'session') {
+                const toolbar = container.querySelector('.aurora-session__toolbar');
+                if (toolbar) {
+                    limitEl = document.createElement('span');
+                    limitEl.className = 'aurora-session__limit';
+                    limitEl.setAttribute('data-aurora-role','char-limit');
+                    limitEl.setAttribute('aria-live','polite');
+                    limitEl.hidden = true;
+                    // Inserimos antes do botão enviar para ficar junto aos controles
+                    const sendBtn = toolbar.querySelector('[data-aurora-role="send"]');
+                    if (sendBtn && sendBtn.parentNode) {
+                        toolbar.insertBefore(limitEl, sendBtn);
+                    } else {
+                        toolbar.appendChild(limitEl);
+                    }
+                }
+            } else {
+                // No layout bolha, preferimos o contador abaixo do input (fora do form), acima do footer
+                const place = container.querySelector('[data-aurora-role="char-limit"]')
+                           || container.querySelector('.aurora-bubble__footer');
+                if (place) {
+                    limitEl = document.createElement('div');
+                    limitEl.className = 'aurora-bubble__limit';
+                    limitEl.setAttribute('data-aurora-role','char-limit');
+                    limitEl.setAttribute('aria-live','polite');
+                    limitEl.hidden = true;
+                    if (place.classList && place.classList.contains('aurora-bubble__footer')) {
+                        place.parentNode.insertBefore(limitEl, place);
+                    } else if (place.parentNode) {
+                        place.parentNode.insertBefore(limitEl, place.nextSibling);
+                    }
+                }
+            }
+        }
+
+        // Notificações inline (substitui alert)
+        let noticeEl = container.querySelector('[data-aurora-role="notice"]');
+        const ensureNotice = () => {
+            if (noticeEl) return noticeEl;
+            if (layout === 'session') {
+                const toolbar = container.querySelector('.aurora-session__toolbar');
+                if (!toolbar) return null;
+                noticeEl = document.createElement('span');
+                noticeEl.className = 'aurora-session__notice';
+                noticeEl.setAttribute('data-aurora-role','notice');
+                noticeEl.setAttribute('role','status');
+                noticeEl.setAttribute('aria-live','polite');
+                noticeEl.hidden = true;
+                // Coloca após a hint
+                const hint = toolbar.querySelector('.aurora-session__hint');
+                if (hint && hint.nextSibling) toolbar.insertBefore(noticeEl, hint.nextSibling);
+                else toolbar.appendChild(noticeEl);
+            } else {
+                const composer = container.querySelector('[data-aurora-role="composer"]');
+                if (!composer) return null;
+                noticeEl = document.createElement('div');
+                noticeEl.className = 'aurora-bubble__notice';
+                noticeEl.setAttribute('data-aurora-role','notice');
+                noticeEl.setAttribute('role','status');
+                noticeEl.setAttribute('aria-live','polite');
+                noticeEl.hidden = true;
+                // Inserir após o input
+                const inp = composer.querySelector('.aurora-bubble__input');
+                if (inp && inp.nextSibling) composer.insertBefore(noticeEl, inp.nextSibling);
+                else composer.appendChild(noticeEl);
+            }
+            return noticeEl;
+        };
+        const showNotice = (msg, type = 'error') => {
+            const n = ensureNotice(); if (!n) return;
+            n.textContent = msg;
+            n.hidden = false;
+            n.classList.remove('is-info','is-error');
+            n.classList.add(type === 'error' ? 'is-error' : 'is-info');
+            // auto-hide depois de alguns segundos
+            clearTimeout(showNotice._to);
+            showNotice._to = setTimeout(() => { try { n.hidden = true; } catch(e){} }, 4000);
+        };
+        const hideNotice = () => { if (noticeEl) noticeEl.hidden = true; };
+
+        if (maxChars > 0) {
+            try { input.setAttribute('maxlength', String(maxChars)); } catch(e) {}
+            const update = () => {
+                const used = (input.value || '').length;
+                const remaining = Math.max(0, maxChars - used);
+                if (limitEl) { limitEl.textContent = `${remaining}/${maxChars}`; limitEl.hidden = false; }
+                if (used <= maxChars) hideNotice();
+            };
+            input.addEventListener('input', update);
+            update();
+        } else if (limitEl) {
+            limitEl.hidden = true;
+        }
 
         // Atualizar textos de boas-vindas e placeholders a partir das i18n, se disponíveis
         try {
@@ -590,7 +1044,15 @@
             event.preventDefault();
             const value = input.value.trim();
 
-            if (!value || isSending) {
+            if (!value || isSending || isRecording || isTranscribing) {
+                return;
+            }
+
+            if (maxChars > 0 && value.length > maxChars) {
+                const msg = (AuroraChatConfig.i18n && AuroraChatConfig.i18n.charsLimit)
+                    ? (AuroraChatConfig.i18n.charsLimit.replace('%d', String(maxChars)))
+                    : `Sua mensagem excede o limite de ${maxChars} caracteres.`;
+                AuroraToast.show(msg, 'error', 'Mensagem muito longa', container);
                 return;
             }
 
@@ -679,15 +1141,34 @@
                     messages.appendChild(typingIndicator);
                     scrollToBottom(messages);
                     try {
-                        const { reply, session, attachments } = await sendRequest(agentId, value, sessionId, meta);
+                        const { reply, session, attachments, audio } = await sendRequest(agentId, value, sessionId, meta);
                         sessionId = session || sessionId;
                         typingIndicator.remove();
-                        const botMessage = createMessage(layout, 'is-bot', mdToHtml(reply));
-                        messages.appendChild(botMessage);
-                        renderInlinePreviews(botMessage);
+                        const _textReply = (typeof reply === 'string') ? reply.trim() : '';
+                        if (_textReply && _textReply !== '*') {
+                            const botMessage = createMessage(layout, 'is-bot', mdToHtml(_textReply));
+                            messages.appendChild(botMessage);
+                            renderInlinePreviews(botMessage);
+                        }
                         if (attachments && attachments.length) {
                             renderAttachments(attachments, messages);
                         }
+                        // Audio player (URL or base64)
+                        try {
+                            if (audio && typeof audio === 'object') {
+                                let src = '';
+                                if (audio.kind === 'url' && audio.src) {
+                                    src = audio.src;
+                                } else if (audio.kind === 'base64' && audio.base64) {
+                                    const t = audio.type || 'audio/mpeg';
+                                    src = `data:${t};base64,${audio.base64}`;
+                                }
+                                if (src) {
+                                    const audioMsg = createAudioMessage(layout, src, audio.type || '');
+                                    messages.appendChild(audioMsg);
+                                }
+                            }
+                        } catch(e) { /* ignore */ }
                         if (typeof performance !== 'undefined') {
                             const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
                             setStatus('complete', elapsed);
@@ -696,8 +1177,10 @@
                         }
                     } catch (error) {
                         console.error('[Aurora Chat]', error);
-                        const fallbackMessage = createMessage(layout, 'is-bot', AuroraChatConfig.i18n.errorDefault);
-                        messages.appendChild(fallbackMessage);
+                        if (AuroraChatConfig.i18n.errorDefault) {
+                            const fallbackMessage = createMessage(layout, 'is-bot', AuroraChatConfig.i18n.errorDefault);
+                            messages.appendChild(fallbackMessage);
+                        }
                         setStatus('idle');
                     } finally {
                         scrollToBottom(messages);
@@ -752,17 +1235,36 @@
             scrollToBottom(messages);
 
             try {
-                const { reply, session, attachments } = await sendRequest(agentId, value, sessionId, prechatData);
+                const { reply, session, attachments, audio } = await sendRequest(agentId, value, sessionId, prechatData);
                 sessionId = session || sessionId;
                 typingIndicator.remove();
 
-                const botMessage = createMessage(layout, 'is-bot', mdToHtml(reply));
-                messages.appendChild(botMessage);
-                // Pré-visualizar URLs inline dentro do conteúdo do bot
-                renderInlinePreviews(botMessage);
+                const _textReply = (typeof reply === 'string') ? reply.trim() : '';
+                if (_textReply && _textReply !== '*') {
+                    const botMessage = createMessage(layout, 'is-bot', mdToHtml(_textReply));
+                    messages.appendChild(botMessage);
+                    // Pré-visualizar URLs inline dentro do conteúdo do bot
+                    renderInlinePreviews(botMessage);
+                }
                 if (attachments && attachments.length) {
                     renderAttachments(attachments, messages);
                 }
+                // Audio player (URL or base64)
+                try {
+                    if (audio && typeof audio === 'object') {
+                        let src = '';
+                        if (audio.kind === 'url' && audio.src) {
+                            src = audio.src;
+                        } else if (audio.kind === 'base64' && audio.base64) {
+                            const t = audio.type || 'audio/mpeg';
+                            src = `data:${t};base64,${audio.base64}`;
+                        }
+                        if (src) {
+                            const audioMsg = createAudioMessage(layout, src, audio.type || '');
+                            messages.appendChild(audioMsg);
+                        }
+                    }
+                } catch(e) { /* ignore */ }
 
                 // anexos (urls) opcionais
                 try {
@@ -778,8 +1280,10 @@
             } catch (error) {
                 console.error('[Aurora Chat]', error);
                 typingIndicator.remove();
-                const fallbackMessage = createMessage(layout, 'is-bot', AuroraChatConfig.i18n.errorDefault);
-                messages.appendChild(fallbackMessage);
+                if (AuroraChatConfig.i18n.errorDefault) {
+                    const fallbackMessage = createMessage(layout, 'is-bot', AuroraChatConfig.i18n.errorDefault);
+                    messages.appendChild(fallbackMessage);
+                }
                 setStatus('idle');
             } finally {
                 scrollToBottom(messages);
@@ -811,6 +1315,8 @@
                 holder.dataset.agent = container.dataset.agent || '0';
                 holder.dataset.maxTurns = container.dataset.maxTurns || '0';
                 holder.dataset.sendForm = container.dataset.sendForm || '0';
+                holder.dataset.maxChars = container.dataset.maxChars || '0';
+                holder.dataset.agentName = container.dataset.agentName || '';
                 // Move o bubble para o novo holder e monta no body
                 holder.appendChild(bubble);
                 document.body.appendChild(holder);
@@ -821,6 +1327,22 @@
             const toggle = bubble.querySelector('.aurora-bubble__launcher');
             const panel = bubble.querySelector('.aurora-bubble__panel');
             const close = bubble.querySelector('.aurora-bubble__close');
+
+            // Garante rodapé com "Powered by Aurora Chat"
+            try {
+                let footer = bubble.querySelector('.aurora-bubble__footer');
+                if (!footer) {
+                    footer = document.createElement('div');
+                    footer.className = 'aurora-bubble__footer';
+                    footer.setAttribute('data-aurora-role','footer');
+                    const toastC = bubble.querySelector('[data-aurora-role="toast-container"]');
+                    if (toastC && toastC.parentNode) toastC.parentNode.insertBefore(footer, toastC);
+                    else bubble.appendChild(footer);
+                }
+                if (!footer.innerHTML || !/Powered by/i.test(footer.textContent)) {
+                    footer.innerHTML = '<small>Feito por Aurora Tecnologia e Inovação</small>';
+                }
+            } catch(_) {}
 
             const openPanel = () => {
                 if (!panel.hidden) return;
@@ -885,12 +1407,13 @@
             e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation();
-            // Redireciono direto para domínios que negam iframe (ex.: WhatsApp)
+            // Redireciono direto para domínios que negam iframe (WhatsApp, YouTube, etc.)
             try {
                 const u = new URL(href);
                 const host = u.hostname.toLowerCase();
-                const denyHosts = ['whatsapp.com','api.whatsapp.com','web.whatsapp.com'];
-                if (denyHosts.some(d => host === d || host.endsWith('.'+d))) {
+                const denyHosts = ['whatsapp.com','youtube.com','youtu.be','facebook.com','fb.com','instagram.com','t.me','telegram.me', 'wa.me', 'twitter.com', 'linkedin.com'];
+                const mustNewTab = denyHosts.some(d => host === d || host.endsWith('.' + d));
+                if (mustNewTab) {
                     window.open(href, '_blank', 'noopener');
                     return;
                 }
