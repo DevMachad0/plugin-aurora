@@ -505,12 +505,29 @@
             if (userMeta.email) payload.append('userEmail', userMeta.email);
             if (userMeta.contact) payload.append('userContact', userMeta.contact);
         }
+        // Timeout estendido + controle de abort para requisições longas (~75s)
+        const controller = new AbortController();
+        const hardTimeoutMs = (AuroraChatConfig.remoteTimeoutMs && parseInt(AuroraChatConfig.remoteTimeoutMs,10) > 0) ? parseInt(AuroraChatConfig.remoteTimeoutMs,10) : 75000;
+        const to = setTimeout(() => {
+            try { controller.abort(); } catch(_){}
+        }, hardTimeoutMs);
 
-        const response = await fetch(AuroraChatConfig.ajaxUrl, {
-            method: 'POST',
-            credentials: 'same-origin',
-            body: payload,
-        });
+        let response;
+        try {
+            response = await fetch(AuroraChatConfig.ajaxUrl, {
+                method: 'POST',
+                credentials: 'same-origin',
+                body: payload,
+                signal: controller.signal,
+            });
+        } catch(err) {
+            clearTimeout(to);
+            if (err.name === 'AbortError') {
+                throw new Error('Timeout');
+            }
+            throw err;
+        }
+        clearTimeout(to);
 
         if (!response.ok) {
             throw new Error('Request error');
@@ -538,11 +555,24 @@
             if (userMeta.contact) payload.append('userContact', userMeta.contact);
         }
 
-        const response = await fetch(AuroraChatConfig.ajaxUrl, {
-            method: 'POST',
-            credentials: 'same-origin',
-            body: payload,
-        });
+        // Timeout estendido para áudio (transcrição pode demorar mais)
+        const controller = new AbortController();
+        const hardTimeoutMs = (AuroraChatConfig.remoteTimeoutMs && parseInt(AuroraChatConfig.remoteTimeoutMs,10) > 0) ? parseInt(AuroraChatConfig.remoteTimeoutMs,10) : 75000;
+        const to = setTimeout(() => { try { controller.abort(); } catch(_){} }, hardTimeoutMs);
+        let response;
+        try {
+            response = await fetch(AuroraChatConfig.ajaxUrl, {
+                method: 'POST',
+                credentials: 'same-origin',
+                body: payload,
+                signal: controller.signal,
+            });
+        } catch(err) {
+            clearTimeout(to);
+            if (err.name === 'AbortError') throw new Error('Timeout');
+            throw err;
+        }
+        clearTimeout(to);
 
         if (!response.ok) throw new Error('Request error');
         const data = await response.json();

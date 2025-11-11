@@ -202,6 +202,8 @@ class Aurora_Chat_Plugin {
                 [
                     'ajaxUrl' => admin_url( 'admin-ajax.php' ),
                     'nonce'   => wp_create_nonce( 'aurora_chat_nonce' ),
+                    // tempo máximo que o front deve aguardar antes de abortar (ms)
+                    'remoteTimeoutMs' => (int) apply_filters( 'aurora_chat_remote_timeout_front_ms', apply_filters( 'aurora_chat_remote_timeout', 75, 'front' ) * 1000 ),
                     'i18n'    => [
                         'errorDefault' => $opts['error_default'],
                         'limitReached' => $opts['limit_reached'],
@@ -659,6 +661,7 @@ class Aurora_Chat_Plugin {
             [
                 'ajaxUrl' => admin_url( 'admin-ajax.php' ),
                 'nonce'   => wp_create_nonce( 'aurora_chat_nonce' ),
+                'remoteTimeoutMs' => (int) apply_filters( 'aurora_chat_remote_timeout_front_ms', apply_filters( 'aurora_chat_remote_timeout', 75, 'front-preview' ) * 1000 ),
                 'i18n'    => [
                     'errorDefault' => $opts['error_default'],
                     'limitReached' => $opts['limit_reached'],
@@ -1038,6 +1041,12 @@ class Aurora_Chat_Plugin {
     $attachments = [];
     $audio_payload = [];
 
+        // Permitir execuções mais longas (agentes podem levar ~60s)
+        if ( function_exists( 'set_time_limit' ) ) {
+            @set_time_limit( 90 );
+        }
+        @ini_set( 'max_execution_time', '90' );
+
         // Usar apenas a URL completa do Webhook do Sistema Aurora
         if ( $remote_webhook ) {
             $url = $remote_webhook;
@@ -1058,10 +1067,12 @@ class Aurora_Chat_Plugin {
             if ( $user_name )   { $payload['nome_usuario'] = $user_name; }
             if ( $user_email )  { $payload['email'] = $user_email; }
             if ( $user_contact ){ $payload['contato'] = $user_contact; }
+            // Timeout customizável via filtro; padrão 75s
+            $timeout = apply_filters( 'aurora_chat_remote_timeout', 75, 'message', $agent_id );
             $args = [
                 'headers' => [ 'Content-Type' => 'application/json', 'Origin' => $origin ],
                 'body'    => wp_json_encode( $payload ),
-                'timeout' => 25,
+                'timeout' => max( 10, (int) $timeout ),
             ];
             $response = wp_remote_post( $url, $args );
             if ( is_wp_error( $response ) ) {
@@ -1159,10 +1170,18 @@ class Aurora_Chat_Plugin {
         if ( $user_email )  { $payload['email'] = $user_email; }
         if ( $user_contact ){ $payload['contato'] = $user_contact; }
 
+        // Permitir execuções mais longas também na transcrição
+        if ( function_exists( 'set_time_limit' ) ) {
+            @set_time_limit( 90 );
+        }
+        @ini_set( 'max_execution_time', '90' );
+
+        // Timeout customizável via filtro; padrão 75s
+        $timeout = apply_filters( 'aurora_chat_remote_timeout', 75, 'audio', $agent_id );
         $args = [
             'headers' => [ 'Content-Type' => 'application/json', 'Origin' => $origin ],
             'body'    => wp_json_encode( $payload ),
-            'timeout' => 45,
+            'timeout' => max( 10, (int) $timeout ),
         ];
 
         $response = wp_remote_post( $remote_webhook, $args );
