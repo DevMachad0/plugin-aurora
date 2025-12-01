@@ -535,7 +535,11 @@
 
         const data = await response.json();
         if (!data.success) {
-            throw new Error(data.data && data.data.message ? data.data.message : 'Unknown error');
+            const msg = data.data && data.data.message ? data.data.message : 'Unknown error';
+            if (String(msg).toLowerCase() === 'timeout') {
+                throw new Error('Timeout');
+            }
+            throw new Error(msg);
         }
 
         return data.data;
@@ -576,7 +580,11 @@
 
         if (!response.ok) throw new Error('Request error');
         const data = await response.json();
-        if (!data.success) throw new Error(data.data && data.data.message ? data.data.message : 'Unknown error');
+        if (!data.success) {
+            const msg = data.data && data.data.message ? data.data.message : 'Unknown error';
+            if (String(msg).toLowerCase() === 'timeout') throw new Error('Timeout');
+            throw new Error(msg);
+        }
         return data.data;
     };
 
@@ -1207,7 +1215,9 @@
                         }
                     } catch (error) {
                         console.error('[Aurora Chat]', error);
-                        if (AuroraChatConfig.i18n.errorDefault) {
+                        if (String(error && error.message) === 'Timeout') {
+                            AuroraToast.show('O agente está levando mais tempo que o esperado. Você pode aguardar mais um pouco ou tentar novamente.', 'info', 'Aguardando', container);
+                        } else if (AuroraChatConfig.i18n.errorDefault) {
                             const fallbackMessage = createMessage(layout, 'is-bot', AuroraChatConfig.i18n.errorDefault);
                             messages.appendChild(fallbackMessage);
                         }
@@ -1310,7 +1320,9 @@
             } catch (error) {
                 console.error('[Aurora Chat]', error);
                 typingIndicator.remove();
-                if (AuroraChatConfig.i18n.errorDefault) {
+                if (String(error && error.message) === 'Timeout') {
+                    AuroraToast.show('O agente está levando mais tempo que o esperado. Você pode aguardar mais um pouco ou tentar novamente.', 'info', 'Aguardando', container);
+                } else if (AuroraChatConfig.i18n.errorDefault) {
                     const fallbackMessage = createMessage(layout, 'is-bot', AuroraChatConfig.i18n.errorDefault);
                     messages.appendChild(fallbackMessage);
                 }

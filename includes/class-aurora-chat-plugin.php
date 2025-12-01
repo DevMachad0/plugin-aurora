@@ -203,7 +203,7 @@ class Aurora_Chat_Plugin {
                     'ajaxUrl' => admin_url( 'admin-ajax.php' ),
                     'nonce'   => wp_create_nonce( 'aurora_chat_nonce' ),
                     // tempo máximo que o front deve aguardar antes de abortar (ms)
-                    'remoteTimeoutMs' => (int) apply_filters( 'aurora_chat_remote_timeout_front_ms', apply_filters( 'aurora_chat_remote_timeout', 75, 'front' ) * 1000 ),
+                    'remoteTimeoutMs' => (int) apply_filters( 'aurora_chat_remote_timeout_front_ms', apply_filters( 'aurora_chat_remote_timeout', 120, 'front' ) * 1000 ),
                     'i18n'    => [
                         'errorDefault' => $opts['error_default'],
                         'limitReached' => $opts['limit_reached'],
@@ -661,7 +661,7 @@ class Aurora_Chat_Plugin {
             [
                 'ajaxUrl' => admin_url( 'admin-ajax.php' ),
                 'nonce'   => wp_create_nonce( 'aurora_chat_nonce' ),
-                'remoteTimeoutMs' => (int) apply_filters( 'aurora_chat_remote_timeout_front_ms', apply_filters( 'aurora_chat_remote_timeout', 75, 'front-preview' ) * 1000 ),
+                'remoteTimeoutMs' => (int) apply_filters( 'aurora_chat_remote_timeout_front_ms', apply_filters( 'aurora_chat_remote_timeout', 90, 'front-preview' ) * 1000 ),
                 'i18n'    => [
                     'errorDefault' => $opts['error_default'],
                     'limitReached' => $opts['limit_reached'],
@@ -1067,8 +1067,8 @@ class Aurora_Chat_Plugin {
             if ( $user_name )   { $payload['nome_usuario'] = $user_name; }
             if ( $user_email )  { $payload['email'] = $user_email; }
             if ( $user_contact ){ $payload['contato'] = $user_contact; }
-            // Timeout customizável via filtro; padrão 75s
-            $timeout = apply_filters( 'aurora_chat_remote_timeout', 75, 'message', $agent_id );
+            // Timeout customizável via filtro; padrão 90s
+            $timeout = apply_filters( 'aurora_chat_remote_timeout', 90, 'message', $agent_id );
             $args = [
                 'headers' => [ 'Content-Type' => 'application/json', 'Origin' => $origin ],
                 'body'    => wp_json_encode( $payload ),
@@ -1076,7 +1076,20 @@ class Aurora_Chat_Plugin {
             ];
             $response = wp_remote_post( $url, $args );
             if ( is_wp_error( $response ) ) {
-                error_log( '[Aurora Chat] Erro ao contatar webhook: ' . $response->get_error_message() );
+                $err_msg = $response->get_error_message();
+                $is_timeout = false;
+                // Heurísticas de timeout comuns
+                if ( method_exists( $response, 'get_error_code' ) ) {
+                    $code = $response->get_error_code();
+                    $is_timeout = in_array( $code, [ 'http_request_timeout', 'connect_timeout', 'operation_timedout', 'request_timed_out', 'timeout' ], true );
+                }
+                if ( ! $is_timeout && is_string( $err_msg ) ) {
+                    $is_timeout = ( false !== stripos( $err_msg, 'timed out' ) ) || ( false !== stripos( $err_msg, 'timeout' ) ) || ( false !== stripos( $err_msg, 'cURL error 28' ) );
+                }
+                error_log( '[Aurora Chat] Erro ao contatar webhook: ' . $err_msg );
+                if ( $is_timeout ) {
+                    wp_send_json_error( [ 'message' => 'timeout' ] );
+                }
             } else {
                 $code = wp_remote_retrieve_response_code( $response );
                 $data = json_decode( wp_remote_retrieve_body( $response ), true );
@@ -1104,6 +1117,10 @@ class Aurora_Chat_Plugin {
                         ];
                     }
                 } else {
+                    // Trata 504/408 como timeout explícito
+                    if ( in_array( (int) $code, [ 504, 408 ], true ) ) {
+                        wp_send_json_error( [ 'message' => 'timeout' ] );
+                    }
                     // Tenta expor mensagem de erro da API para facilitar o diagnóstico no chat
                     if ( is_array( $data ) && ! empty( $data['error'] ) ) {
                         $response_text = wp_kses_post( (string) $data['error'] );
@@ -1176,8 +1193,8 @@ class Aurora_Chat_Plugin {
         }
         @ini_set( 'max_execution_time', '90' );
 
-        // Timeout customizável via filtro; padrão 75s
-        $timeout = apply_filters( 'aurora_chat_remote_timeout', 75, 'audio', $agent_id );
+        // Timeout customizável via filtro; padrão 90s
+        $timeout = apply_filters( 'aurora_chat_remote_timeout', 120, 'audio', $agent_id );
         $args = [
             'headers' => [ 'Content-Type' => 'application/json', 'Origin' => $origin ],
             'body'    => wp_json_encode( $payload ),

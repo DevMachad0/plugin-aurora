@@ -3,7 +3,7 @@
  * Plugin Name:       Aurora Chat
  * Plugin URI:        https://agentesaurora.com.br/
  * Description:       Plataforma de agentes conversacionais com templates visuais personalizáveis.
- * Version:           1.0.49
+ * Version:           1.0.50
  * Author:            Aurora Labs
  * Author URI:        https://agentesaurora.com.br/
  * Text Domain:       aurora-chat
@@ -14,7 +14,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'AURORA_CHAT_VERSION', '1.0.49' );
+define( 'AURORA_CHAT_VERSION', '1.0.50' );
 define( 'AURORA_CHAT_FILE', __FILE__ );
 define( 'AURORA_CHAT_DIR', plugin_dir_path( __FILE__ ) );
 define( 'AURORA_CHAT_URL', plugin_dir_url( __FILE__ ) );
