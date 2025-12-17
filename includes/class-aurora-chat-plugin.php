@@ -51,6 +51,7 @@ class Aurora_Chat_Plugin {
      * Limite máximo de caracteres por mensagem do usuário.
      */
     const META_MAX_INPUT_CHARS = '_aurora_max_input_chars';
+    const LAUNCHER_LABEL_MAX_LENGTH = 25;
 
     /**
      * Retorna instância única.
@@ -203,7 +204,7 @@ class Aurora_Chat_Plugin {
                     'ajaxUrl' => admin_url( 'admin-ajax.php' ),
                     'nonce'   => wp_create_nonce( 'aurora_chat_nonce' ),
                     // tempo máximo que o front deve aguardar antes de abortar (ms)
-                    'remoteTimeoutMs' => (int) apply_filters( 'aurora_chat_remote_timeout_front_ms', apply_filters( 'aurora_chat_remote_timeout', 120, 'front' ) * 1000 ),
+                    'remoteTimeoutMs' => (int) apply_filters( 'aurora_chat_remote_timeout_front_ms', apply_filters( 'aurora_chat_remote_timeout', 90, 'front' ) * 1000 ),
                     'i18n'    => [
                         'errorDefault' => $opts['error_default'],
                         'limitReached' => $opts['limit_reached'],
@@ -224,6 +225,8 @@ class Aurora_Chat_Plugin {
                         'icon'    => $site_icon_id,
                     ],
                     'agentStatus' => in_array( $opts['agent_status'], [ 'online', 'offline' ], true ) ? $opts['agent_status'] : 'online',
+                    'launcherLabel' => $opts['launcher_label'],
+                    'launcherLabelLimit' => self::LAUNCHER_LABEL_MAX_LENGTH,
                     // Sem configurações específicas de agente neste contexto
                 ]
             );
@@ -681,6 +684,8 @@ class Aurora_Chat_Plugin {
                     'icon'    => $site_icon_id,
                 ],
                 'agentStatus' => in_array( $opts['agent_status'], [ 'online', 'offline' ], true ) ? $opts['agent_status'] : 'online',
+                'launcherLabel' => $opts['launcher_label'],
+                'launcherLabelLimit' => self::LAUNCHER_LABEL_MAX_LENGTH,
             ]
         );
 
@@ -761,6 +766,7 @@ class Aurora_Chat_Plugin {
             'status_offline'   => __( 'Offline', 'aurora-chat' ),
             'agent_status'     => 'online',
             'close_message'    => __( 'Atendimento encerrado com sucesso.', 'aurora-chat' ),
+            'launcher_label'   => __( 'Fale com a Aurora', 'aurora-chat' ),
         ];
         $opts = wp_parse_args( is_array( $opts ) ? $opts : [], $defaults );
 
@@ -813,6 +819,10 @@ class Aurora_Chat_Plugin {
 
         echo '<tr><th><label for="close_message">' . esc_html__( 'Mensagem de encerramento', 'aurora-chat' ) . '</label></th>';
         echo '<td><input type="text" class="regular-text" id="close_message" name="close_message" value="' . esc_attr( $opts['close_message'] ) . '" /></td></tr>';
+
+        echo '<tr><th><label for="launcher_label">' . esc_html__( 'Texto do botão da bolha', 'aurora-chat' ) . '</label></th>';
+        echo '<td><input type="text" class="regular-text" id="launcher_label" name="launcher_label" value="' . esc_attr( $opts['launcher_label'] ) . '" maxlength="' . esc_attr( self::LAUNCHER_LABEL_MAX_LENGTH ) . '" />';
+        echo '<p class="description">' . esc_html__( 'Texto exibido dentro do botão de abertura do chat. Máximo de 25 caracteres.', 'aurora-chat' ) . '</p></td></tr>';
 
         echo '</tbody></table>';
         echo '<p class="submit"><button type="submit" class="button button-primary">' . esc_html__( 'Salvar mensagens', 'aurora-chat' ) . '</button></p>';
@@ -1232,11 +1242,14 @@ class Aurora_Chat_Plugin {
             wp_die( __( 'Ação não autorizada.', 'aurora-chat' ) );
         }
 
-        $fields = [ 'welcome_title', 'welcome_subtitle', 'welcome_bot', 'error_default', 'limit_reached', 'status_idle', 'status_offline', 'status_responding', 'status_complete', 'agent_status', 'close_message' ];
+        $fields = [ 'welcome_title', 'welcome_subtitle', 'welcome_bot', 'error_default', 'limit_reached', 'status_idle', 'status_offline', 'status_responding', 'status_complete', 'agent_status', 'close_message', 'launcher_label' ];
         $opts = [];
         foreach ( $fields as $f ) {
             if ( isset( $_POST[ $f ] ) ) {
                 $val = is_string( $_POST[ $f ] ) ? sanitize_textarea_field( wp_unslash( $_POST[ $f ] ) ) : '';
+                if ( 'launcher_label' === $f ) {
+                    $val = $this->truncate_text_limit( $val, self::LAUNCHER_LABEL_MAX_LENGTH );
+                }
                 $opts[ $f ] = $val;
             }
         }

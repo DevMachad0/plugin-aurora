@@ -249,6 +249,16 @@
         });
     };
 
+    const applyLauncherLabel = (container) => {
+        if (!container || !AuroraChatConfig) return;
+        const target = container.querySelector('[data-aurora-role="launcher-label"]');
+        if (!target) return;
+        const limit = Math.max(1, parseInt(AuroraChatConfig.launcherLabelLimit, 10) || 25);
+        const configured = typeof AuroraChatConfig.launcherLabel === 'string' ? AuroraChatConfig.launcherLabel.trim() : '';
+        const text = configured || target.textContent || '';
+        target.textContent = limit > 0 ? text.slice(0, limit) : text;
+    };
+
     // ============== Modal / Lightbox ==============
     const AuroraModal = (() => {
         let root, contentEl;
@@ -589,15 +599,16 @@
     };
 
     const initChat = (container) => {
-    const layout = container.classList.contains('aurora-chat-layout-session') ? 'session' : 'bubble';
-    const messages = container.querySelector('[data-aurora-role="messages"]');
+        const layout = container.classList.contains('aurora-chat-layout-session') ? 'session' : 'bubble';
+        applyLauncherLabel(container);
+        const messages = container.querySelector('[data-aurora-role="messages"]');
         const composer = container.querySelector('[data-aurora-role="composer"]');
         const footer = container.querySelector('[data-aurora-role="footer"]');
         const overlay = container.querySelector('[data-aurora-role="overlay"]');
         const welcome = container.querySelector('[data-aurora-role="welcome"]');
         const startButton = container.querySelector('[data-aurora-role="start"]');
-    const statusEl = container.querySelector('[data-aurora-role="status"]');
-    let micBtn = container.querySelector('[data-aurora-role="mic"]');
+        const statusEl = container.querySelector('[data-aurora-role="status"]');
+        let micBtn = container.querySelector('[data-aurora-role="mic"]');
         // Popular avatar/brand com ícone do site ou inicial e nome do agente
         try {
             const brand = (typeof AuroraChatConfig !== 'undefined' && AuroraChatConfig.brand) ? AuroraChatConfig.brand : null;
@@ -1365,6 +1376,7 @@
                 // Reatribui ponteiros locais para o novo escopo
                 container = holder;
             }
+            applyLauncherLabel(container);
 
             const toggle = bubble.querySelector('.aurora-bubble__launcher');
             const panel = bubble.querySelector('.aurora-bubble__panel');

@@ -1,7 +1,7 @@
 <div class="aurora-bubble" data-aurora-role="bubble" aria-live="polite">
-    <button class="aurora-bubble__launcher" type="button" aria-controls="aurora-bubble-panel" aria-expanded="false">
+            <button class="aurora-bubble__launcher" type="button" aria-controls="aurora-bubble-panel" aria-expanded="false">
         <span class="aurora-bubble__launcher-icon" aria-hidden="true">💬</span>
-        <span class="aurora-bubble__launcher-label">Fale com a Aurora</span>
+        <span class="aurora-bubble__launcher-label" data-aurora-role="launcher-label">Fale com a Aurora</span>
     </button>
 
     <div class="aurora-bubble__overlay" data-aurora-role="overlay" hidden></div>
