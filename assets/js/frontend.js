@@ -13,29 +13,112 @@
     const mdToHtml = (md) => {
         if (!md) return '';
         let s = String(md);
-        // Code blocks
+
+        // Escape HTML characters helper
+        const escapeHtml = (text) => text.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+        // Code blocks (fenced)
         s = s.replace(/```([a-z0-9_\-]+)?\n([\s\S]*?)\n```/gi, (m, lang, code) => {
-            const esc = code.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+            const esc = escapeHtml(code);
             const cls = lang ? ` class="language-${lang}"` : '';
-            return `<pre><code${cls}>${esc}</code></pre>`;
+            return `\n<pre><code${cls}>${esc}</code></pre>\n`;
         });
-        // Inline code
-        s = s.replace(/`([^`]+)`/g, (m, code) => `<code>${code.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}</code>`);
-        // Horizontal rule: lines with ** or *** alone
-        s = s.replace(/^\s*\*{2,3}\s*$/gm, '<hr/>');
-        // Bold/italic
-        s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\*([^*]+)\*/g, '<em>$1</em>');
-        // Headings
-        s = s.replace(/^###\s+(.+)$/gm, '<h3>$1</h3>').replace(/^##\s+(.+)$/gm, '<h2>$1</h2>').replace(/^#\s+(.+)$/gm, '<h1>$1</h1>');
-        // Links
-        s = s.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1<\/a>');
-        // Bare URLs to links
-        s = s.replace(/(^|\s)(https?:\/\/[^\s<]+)(?=$|\s)/g, (m, pre, url) => `${pre}<a href="${url}" target="_blank" rel="noopener noreferrer">${url}<\/a>`);
-        // Paragraphs
-        s = s.split(/\n{2,}/).map(p => `<p>${p.replace(/\n/g,'<br>')}</p>`).join('');
-        // Unwrap hr inside p
+
+        // Inline code (processar antes de outros para proteger o conteúdo)
+        s = s.replace(/`([^`]+)`/g, (m, code) => `<code>${escapeHtml(code)}</code>`);
+
+        // Horizontal rules: ---, ***, ___, **, ***
+        s = s.replace(/^\s*([-*_]){3,}\s*$/gm, '<hr/>');
+
+        // Blockquotes (> texto)
+        s = s.replace(/^>\s+(.+)$/gm, '<blockquote>$1</blockquote>');
+        // Merge consecutive blockquotes
+        s = s.replace(/<\/blockquote>\n<blockquote>/g, '\n');
+
+        // Task lists / Checkboxes (- [ ] item ou - [x] item)
+        s = s.replace(/^[\s]*[-*]\s+\[x\]\s+(.+)$/gim, '<li class="task-item checked"><input type="checkbox" checked disabled> $1</li>');
+        s = s.replace(/^[\s]*[-*]\s+\[\s?\]\s+(.+)$/gim, '<li class="task-item"><input type="checkbox" disabled> $1</li>');
+
+        // Unordered lists (-, *, +)
+        s = s.replace(/^[\s]*[-*+]\s+(?!\[)(.+)$/gm, '<li>$1</li>');
+
+        // Ordered lists (1. item, 2. item, etc)
+        s = s.replace(/^[\s]*\d+\.\s+(.+)$/gm, '<li>$1</li>');
+
+        // Wrap consecutive <li> in <ul> or <ol>
+        s = s.replace(/((?:<li(?:\s[^>]*)?>[\s\S]*?<\/li>\n?)+)/g, (match) => {
+            // Check if it contains task items
+            if (match.includes('class="task-item')) {
+                return `<ul class="task-list">${match}</ul>`;
+            }
+            return `<ul>${match}</ul>`;
+        });
+
+        // Strikethrough (~~texto~~)
+        s = s.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+
+        // Bold with ** or __
+        s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        s = s.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+
+        // Italic with * or _
+        s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+        s = s.replace(/(?<![a-zA-Z0-9])_([^_]+)_(?![a-zA-Z0-9])/g, '<em>$1</em>');
+
+        // Headings (processados do maior para o menor para evitar conflitos)
+        s = s.replace(/^######\s+(.+)$/gm, '<h6>$1</h6>')
+            .replace(/^#####\s+(.+)$/gm, '<h5>$1</h5>')
+            .replace(/^####\s+(.+)$/gm, '<h4>$1</h4>')
+            .replace(/^###\s+(.+)$/gm, '<h3>$1</h3>')
+            .replace(/^##\s+(.+)$/gm, '<h2>$1</h2>')
+            .replace(/^#\s+(.+)$/gm, '<h1>$1</h1>');
+
+        // Images ![alt](url)
+        s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, '<img src="$2" alt="$1" loading="lazy" class="aurora-md-image"/>');
+
+        // Links [texto](url)
+        s = s.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+
+        // Bare URLs to links (não processar se já estiver dentro de tags)
+        s = s.replace(/(^|[^"'>])(https?:\/\/[^\s<]+)(?=$|\s|<)/g, (m, pre, url) => `${pre}<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`);
+
+        // Tables (básico)
+        s = s.replace(/^\|(.+)\|\s*$/gm, (match, content) => {
+            const cells = content.split('|').map(c => c.trim());
+            // Check if it's a separator row (|---|---|)
+            if (cells.every(c => /^[-:]+$/.test(c))) {
+                return ''; // Remove separator rows
+            }
+            const cellsHtml = cells.map(c => `<td>${c}</td>`).join('');
+            return `<tr>${cellsHtml}</tr>`;
+        });
+        // Wrap consecutive <tr> in <table>
+        s = s.replace(/((?:<tr>[\s\S]*?<\/tr>\n?)+)/g, '<table class="aurora-md-table">$1</table>');
+        // Convert first row to header if followed by more rows
+        s = s.replace(/<table([^>]*)><tr>([\s\S]*?)<\/tr>/g, (match, attrs, firstRowContent) => {
+            const headerCells = firstRowContent.replace(/<td>/g, '<th>').replace(/<\/td>/g, '</th>');
+            return `<table${attrs}><thead><tr>${headerCells}</tr></thead><tbody>`;
+        });
+        s = s.replace(/<\/table>/g, '</tbody></table>');
+
+        // Paragraphs (processar por último)
+        s = s.split(/\n{2,}/).map(p => {
+            p = p.trim();
+            // Não envolver em <p> se já for um elemento de bloco
+            if (/^<(h[1-6]|p|div|ul|ol|li|blockquote|pre|table|hr|img)/i.test(p)) {
+                return p;
+            }
+            if (!p) return '';
+            return `<p>${p.replace(/\n/g, '<br>')}</p>`;
+        }).join('\n');
+
+        // Cleanup: remover tags vazias e corrigir espaçamento
+        s = s.replace(/<p>\s*<\/p>/g, '');
         s = s.replace(/<p><hr\/?><\/p>/g, '<hr/>');
-        return s;
+        s = s.replace(/<p>(<(?:ul|ol|table|blockquote|pre|h[1-6])[^>]*>)/g, '$1');
+        s = s.replace(/(<\/(?:ul|ol|table|blockquote|pre|h[1-6])>)<\/p>/g, '$1');
+
+        return s.trim();
     };
 
     const createMessage = (layout, role, html) => {
@@ -80,7 +163,7 @@
                 // some browsers use the type on <source>, but <audio type> is fine to hint
                 audio.setAttribute('type', type);
             }
-        } catch(e) { /* no-op */ }
+        } catch (e) { /* no-op */ }
         bubble.appendChild(audio);
         article.appendChild(bubble);
         if (layout === 'session') {
@@ -105,7 +188,7 @@
             try {
                 const clean = String(u);
                 const ext = (clean.split('?')[0].split('#')[0].split('.').pop() || '').toLowerCase();
-                const isImg = ['jpg','jpeg','png','gif','webp','avif','svg','bmp'].includes(ext);
+                const isImg = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'svg', 'bmp'].includes(ext);
                 const a = document.createElement('a');
                 a.href = clean; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.className = 'aurora-attachment-cell';
                 if (isImg) {
@@ -116,9 +199,63 @@
                     a.classList.add('is-doc');
                 }
                 cont.appendChild(a);
-            } catch(e) { /* no-op */ }
+            } catch (e) { /* no-op */ }
         });
         messagesEl.appendChild(cont);
+    };
+
+    // Verifica se a URL é um placeholder ou inválida (não deve gerar pré-visualização)
+    const isPlaceholderOrInvalidUrl = (url) => {
+        try {
+            const u = new URL(url);
+            const hostname = u.hostname.toLowerCase();
+
+            // Lista de padrões de URLs placeholder/inválidas
+            const placeholderPatterns = [
+                /^sua[-_]?url$/i,
+                /^your[-_]?url$/i,
+                /^exemplo$/i,
+                /^example$/i,
+                /^url[-_]?aqui$/i,
+                /^seu[-_]?site$/i,
+                /^your[-_]?site$/i,
+                /^domain$/i,
+                /^dominio$/i,
+                /^teste$/i,
+                /^test$/i,
+                /^localhost$/i,
+                /^127\.0\.0\.\d+$/,
+                /^0\.0\.0\.0$/,
+                /^site[-_]?aqui$/i,
+                /^link[-_]?aqui$/i,
+                /^placeholder$/i,
+                /^xxx+$/i,
+                /^abc+$/i,
+            ];
+
+            // Verifica se o hostname corresponde a algum padrão inválido
+            const hostnameWithoutTLD = hostname.replace(/\.(com|net|org|br|io|dev|app|site|local)$/i, '');
+            for (const pattern of placeholderPatterns) {
+                if (pattern.test(hostname) || pattern.test(hostnameWithoutTLD)) {
+                    return true;
+                }
+            }
+
+            // Verifica se o hostname tem menos de 4 caracteres (muito curto para ser real)
+            if (hostnameWithoutTLD.length < 3 && !hostname.includes('.')) {
+                return true;
+            }
+
+            // Verifica se o hostname não tem TLD válido (ex: "sua-url" sem .com)
+            if (!hostname.includes('.') || /^[a-z0-9-]+$/i.test(hostname)) {
+                return true;
+            }
+
+            return false;
+        } catch (e) {
+            // URL inválida
+            return true;
+        }
     };
 
     // Pré-visualização inline dentro da mensagem do bot (dinâmico, sem depender da extensão)
@@ -127,10 +264,10 @@
         const bubble = botMessageEl.querySelector('[class$="__bubble"]');
         if (!bubble) return;
 
-    const links = Array.from(bubble.querySelectorAll('a[href^="http"]'));
+        const links = Array.from(bubble.querySelectorAll('a[href^="http"]'));
         if (!links.length) return;
-    // Remover target _blank para evitar abertura imediata em nova aba (nós tratamos o clique)
-    links.forEach((a) => { try { a.removeAttribute('target'); } catch(e){} });
+        // Remover target _blank para evitar abertura imediata em nova aba (nós tratamos o clique)
+        links.forEach((a) => { try { a.removeAttribute('target'); } catch (e) { } });
 
         const getYtId = (url) => {
             try {
@@ -140,7 +277,7 @@
                     if (u.pathname.startsWith('/shorts/')) return u.pathname.split('/')[2];
                     return u.searchParams.get('v');
                 }
-            } catch(e) { return null; }
+            } catch (e) { return null; }
             return null;
         };
 
@@ -154,7 +291,7 @@
 
         const buildLinkCard = (url) => {
             let host = '';
-            try { host = new URL(url).hostname.replace(/^www\./,''); } catch(_) { host = url; }
+            try { host = new URL(url).hostname.replace(/^www\./, ''); } catch (_) { host = url; }
             const a = document.createElement('a');
             a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.className = 'aurora-link-card';
             const fav = document.createElement('div'); fav.className = 'aurora-link-card__favicon';
@@ -162,7 +299,7 @@
             try {
                 const u = new URL(url);
                 img.src = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(u.hostname)}&sz=64`;
-            } catch(_) { img.src = ''; }
+            } catch (_) { img.src = ''; }
             fav.appendChild(img);
             const hostEl = document.createElement('div'); hostEl.className = 'aurora-link-card__host'; hostEl.textContent = host;
             a.appendChild(fav); a.appendChild(hostEl);
@@ -196,11 +333,19 @@
 
         const isDocExt = (url) => {
             const ext = (url.split('?')[0].split('#')[0].split('.').pop() || '').toLowerCase();
-            return ['pdf','doc','docx','xls','xlsx','ppt','pptx','txt','zip','rar','csv'].includes(ext);
+            return ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'zip', 'rar', 'csv'].includes(ext);
         };
 
         links.forEach((link) => {
             const url = link.href;
+
+            // Se for uma URL placeholder/inválida, mantém o link original sem pré-visualização
+            if (isPlaceholderOrInvalidUrl(url)) {
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer';
+                return;
+            }
+
             // Substitui o link imediatamente por um skeleton para evitar flicker do texto
             const holder = document.createElement('span');
             holder.className = 'aurora-inline-thumb';
@@ -245,7 +390,7 @@
             const timeout = setTimeout(() => { fail(); }, isMobile ? 7000 : 3000);
             probe.onload = () => { clearTimeout(timeout); if (probe.naturalWidth > 0 && probe.naturalHeight > 0) ok(); else fail(); };
             probe.onerror = () => { clearTimeout(timeout); fail(); };
-            try { probe.src = url; } catch(e) { clearTimeout(timeout); fail(); }
+            try { probe.src = url; } catch (e) { clearTimeout(timeout); fail(); }
         });
     };
 
@@ -268,7 +413,7 @@
             if (root) return root;
             root = document.createElement('div');
             root.className = 'aurora-modal';
-                        root.innerHTML = `
+            root.innerHTML = `
                             <div class="aurora-modal__dialog" role="dialog" aria-modal="true" aria-label="Visualização">
                                 <div class="aurora-modal__header">
                                     <div class="aurora-modal__actions">
@@ -346,9 +491,9 @@
             window.addEventListener('mouseup', () => { isDown = false; wrap.style.cursor = ''; });
             window.addEventListener('mousemove', (e) => { if (!isDown) return; tx = e.clientX - startX; ty = e.clientY - startY; applyTransform(); });
             // Touch
-            wrap.addEventListener('touchstart', (e) => { if (scale <= fitScale) return; const t = e.touches[0]; isDown = true; startX = t.clientX - tx; startY = t.clientY - ty; }, {passive:true});
-            wrap.addEventListener('touchend', () => { isDown = false; }, {passive:true});
-            wrap.addEventListener('touchmove', (e) => { if (!isDown) return; const t = e.touches[0]; tx = t.clientX - startX; ty = t.clientY - startY; applyTransform(); }, {passive:true});
+            wrap.addEventListener('touchstart', (e) => { if (scale <= fitScale) return; const t = e.touches[0]; isDown = true; startX = t.clientX - tx; startY = t.clientY - ty; }, { passive: true });
+            wrap.addEventListener('touchend', () => { isDown = false; }, { passive: true });
+            wrap.addEventListener('touchmove', (e) => { if (!isDown) return; const t = e.touches[0]; tx = t.clientX - startX; ty = t.clientY - startY; applyTransform(); }, { passive: true });
             // Wheel zoom
             wrap.addEventListener('wheel', (e) => {
                 e.preventDefault();
@@ -357,7 +502,7 @@
                 scale = Math.min(6 * fitScale, Math.max(minS, scale + delta));
                 applyTransform();
                 updateLabel();
-            }, {passive:false});
+            }, { passive: false });
 
             // Initialize
             updateLabel();
@@ -430,7 +575,7 @@
             const timer = setTimeout(decideIframe, 900); // se não carregar rápido, assume iframe
             probe.onload = () => { clearTimeout(timer); if (probe.naturalWidth > 0 && probe.naturalHeight > 0) decideImage(); else decideIframe(); };
             probe.onerror = () => { clearTimeout(timer); decideIframe(); };
-            try { probe.src = url; } catch(e) { clearTimeout(timer); decideIframe(); }
+            try { probe.src = url; } catch (e) { clearTimeout(timer); decideIframe(); }
         };
 
         return { openURL, close };
@@ -490,12 +635,12 @@
             body.appendChild(h); body.appendChild(p);
             const close = document.createElement('button');
             close.className = 'aurora-toast__close';
-            close.setAttribute('aria-label','Fechar');
+            close.setAttribute('aria-label', 'Fechar');
             close.textContent = '×';
-            close.addEventListener('click', () => { try { el.remove(); } catch(_){} });
+            close.addEventListener('click', () => { try { el.remove(); } catch (_) { } });
             el.appendChild(icon); el.appendChild(body); el.appendChild(close);
             root.appendChild(el);
-            setTimeout(() => { try { el.remove(); } catch(_){} }, 4500);
+            setTimeout(() => { try { el.remove(); } catch (_) { } }, 4500);
             return el;
         };
         return { show };
@@ -517,9 +662,9 @@
         }
         // Timeout estendido + controle de abort para requisições longas (~75s)
         const controller = new AbortController();
-        const hardTimeoutMs = (AuroraChatConfig.remoteTimeoutMs && parseInt(AuroraChatConfig.remoteTimeoutMs,10) > 0) ? parseInt(AuroraChatConfig.remoteTimeoutMs,10) : 75000;
+        const hardTimeoutMs = (AuroraChatConfig.remoteTimeoutMs && parseInt(AuroraChatConfig.remoteTimeoutMs, 10) > 0) ? parseInt(AuroraChatConfig.remoteTimeoutMs, 10) : 75000;
         const to = setTimeout(() => {
-            try { controller.abort(); } catch(_){}
+            try { controller.abort(); } catch (_) { }
         }, hardTimeoutMs);
 
         let response;
@@ -530,7 +675,7 @@
                 body: payload,
                 signal: controller.signal,
             });
-        } catch(err) {
+        } catch (err) {
             clearTimeout(to);
             if (err.name === 'AbortError') {
                 throw new Error('Timeout');
@@ -571,8 +716,8 @@
 
         // Timeout estendido para áudio (transcrição pode demorar mais)
         const controller = new AbortController();
-        const hardTimeoutMs = (AuroraChatConfig.remoteTimeoutMs && parseInt(AuroraChatConfig.remoteTimeoutMs,10) > 0) ? parseInt(AuroraChatConfig.remoteTimeoutMs,10) : 75000;
-        const to = setTimeout(() => { try { controller.abort(); } catch(_){} }, hardTimeoutMs);
+        const hardTimeoutMs = (AuroraChatConfig.remoteTimeoutMs && parseInt(AuroraChatConfig.remoteTimeoutMs, 10) > 0) ? parseInt(AuroraChatConfig.remoteTimeoutMs, 10) : 75000;
+        const to = setTimeout(() => { try { controller.abort(); } catch (_) { } }, hardTimeoutMs);
         let response;
         try {
             response = await fetch(AuroraChatConfig.ajaxUrl, {
@@ -581,7 +726,7 @@
                 body: payload,
                 signal: controller.signal,
             });
-        } catch(err) {
+        } catch (err) {
             clearTimeout(to);
             if (err.name === 'AbortError') throw new Error('Timeout');
             throw err;
@@ -620,7 +765,7 @@
                         if (brand.icon) {
                             avatar.textContent = '';
                             avatar.style.background = `center/cover no-repeat url(${brand.icon})`;
-                            avatar.setAttribute('aria-hidden','true');
+                            avatar.setAttribute('aria-hidden', 'true');
                         } else if (brand.initial) {
                             avatar.style.background = '';
                             avatar.textContent = brand.initial;
@@ -637,7 +782,7 @@
                         if (brand.icon) {
                             brandIcon.textContent = '';
                             brandIcon.style.background = `center/cover no-repeat url(${brand.icon})`;
-                            brandIcon.setAttribute('aria-hidden','true');
+                            brandIcon.setAttribute('aria-hidden', 'true');
                         } else if (brand.initial) {
                             brandIcon.style.background = '';
                             brandIcon.textContent = brand.initial;
@@ -650,8 +795,8 @@
                     }
                 }
             }
-        } catch(e) { /* no-op */ }
-    const handoffButton = null; // removido
+        } catch (e) { /* no-op */ }
+        const handoffButton = null; // removido
 
         if (!messages || !composer) {
             return;
@@ -665,10 +810,10 @@
         // ======= Tema: alternância claro/escuro =======
         const THEME_KEY = 'aurora-theme';
         const getTheme = () => {
-            try { return localStorage.getItem(THEME_KEY) || 'light'; } catch(_) { return 'light'; }
+            try { return localStorage.getItem(THEME_KEY) || 'light'; } catch (_) { return 'light'; }
         };
         const setTheme = (theme) => {
-            try { localStorage.setItem(THEME_KEY, theme); } catch(_) {}
+            try { localStorage.setItem(THEME_KEY, theme); } catch (_) { }
         };
         const applyTheme = (theme) => {
             const dark = theme === 'dark';
@@ -701,14 +846,14 @@
         const applyStatusAppearance = (state) => {
             if (!statusEl) return;
             try {
-                statusEl.classList.remove('is-online','is-offline');
+                statusEl.classList.remove('is-online', 'is-offline');
                 const s = (state || '').toLowerCase();
                 if (s === 'offline') statusEl.classList.add('is-offline');
                 else statusEl.classList.add('is-online');
                 // Ajusta também uma classe no container para CSS global se necessário
-                container.classList.remove('aurora-status-online','aurora-status-offline');
+                container.classList.remove('aurora-status-online', 'aurora-status-offline');
                 container.classList.add(s === 'offline' ? 'aurora-status-offline' : 'aurora-status-online');
-            } catch(_){}
+            } catch (_) { }
         };
 
         const setStatus = (() => {
@@ -752,7 +897,7 @@
             };
         })();
 
-    setStatus('idle');
+        setStatus('idle');
 
         // Garante presença do botão de microfone mesmo em templates antigos salvos no banco
         if (!micBtn && composer) {
@@ -796,18 +941,18 @@
                 const sendBtn = container.querySelector('[data-aurora-role="send"]');
                 if (sendBtn) sendBtn.disabled = !!flag;
                 if (micBtn) micBtn.disabled = !!flag; // bloqueia mic tanto gravando quanto transcrevendo
-            } catch(e){}
+            } catch (e) { }
         };
 
         const buildRecordingUI = () => {
             const wrap = document.createElement('div');
             wrap.className = layout === 'session' ? 'aurora-session__recording' : 'aurora-bubble__recording';
-            wrap.setAttribute('role','status');
-            wrap.setAttribute('aria-live','polite');
+            wrap.setAttribute('role', 'status');
+            wrap.setAttribute('aria-live', 'polite');
 
             const wave = document.createElement('div');
             wave.className = 'aurora-voice-wave';
-            for (let i=0;i<8;i++){ const bar=document.createElement('span'); wave.appendChild(bar); }
+            for (let i = 0; i < 8; i++) { const bar = document.createElement('span'); wave.appendChild(bar); }
 
             const timer = document.createElement('span');
             timer.className = 'aurora-rec-timer';
@@ -838,13 +983,13 @@
             let secs = 0;
             Recording.startTs = Date.now();
             Recording.timerId = setInterval(() => {
-                secs = Math.floor((Date.now()-Recording.startTs)/1000);
-                const mm = String(Math.floor(secs/60)).padStart(2,'0');
-                const ss = String(secs%60).padStart(2,'0');
+                secs = Math.floor((Date.now() - Recording.startTs) / 1000);
+                const mm = String(Math.floor(secs / 60)).padStart(2, '0');
+                const ss = String(secs % 60).padStart(2, '0');
                 ui.timer.textContent = `${mm}:${ss}`;
             }, 500);
-            ui.btnCancel.addEventListener('click', () => { cancelRecording = true; try { mediaRecorder && mediaRecorder.stop(); } catch(_){} });
-            ui.btnSend.addEventListener('click', () => { cancelRecording = false; try { mediaRecorder && mediaRecorder.stop(); } catch(_){} });
+            ui.btnCancel.addEventListener('click', () => { cancelRecording = true; try { mediaRecorder && mediaRecorder.stop(); } catch (_) { } });
+            ui.btnSend.addEventListener('click', () => { cancelRecording = false; try { mediaRecorder && mediaRecorder.stop(); } catch (_) { } });
             return ui;
         };
 
@@ -861,14 +1006,14 @@
             reader.readAsDataURL(blob);
         });
 
-    const startRecording = async () => {
+        const startRecording = async () => {
             if (isRecording || isSending) return;
             ensureStarted();
             isRecording = true; cancelRecording = false; audioChunks = [];
             setStatus('responding'); // ou estado próprio visual
             disableComposer(true);
             input.value = '';
-            input.setAttribute('placeholder','Gravando…');
+            input.setAttribute('placeholder', 'Gravando…');
 
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -880,17 +1025,17 @@
             }
 
             const recUI = mountRecordingUI();
-            if (micBtn) micBtn.setAttribute('data-aurora-recording','true');
+            if (micBtn) micBtn.setAttribute('data-aurora-recording', 'true');
             mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) audioChunks.push(e.data); };
             mediaRecorder.onstop = async () => {
                 const blob = new Blob(audioChunks, { type: 'audio/webm' });
                 // Encerrar tracks
-                try { mediaRecorder.stream.getTracks().forEach(t => t.stop()); } catch(_){}
+                try { mediaRecorder.stream.getTracks().forEach(t => t.stop()); } catch (_) { }
                 unmountRecordingUI();
                 isRecording = false;
                 if (micBtn) micBtn.removeAttribute('data-aurora-recording');
                 if (cancelRecording || blob.size === 0) {
-                    disableComposer(false); setStatus('idle'); input.setAttribute('placeholder','Digite sua mensagem'); return;
+                    disableComposer(false); setStatus('idle'); input.setAttribute('placeholder', 'Digite sua mensagem'); return;
                 }
                 // Transcrever
                 isTranscribing = true; setStatus('transcribing');
@@ -927,8 +1072,8 @@
                 if (toolbar) {
                     limitEl = document.createElement('span');
                     limitEl.className = 'aurora-session__limit';
-                    limitEl.setAttribute('data-aurora-role','char-limit');
-                    limitEl.setAttribute('aria-live','polite');
+                    limitEl.setAttribute('data-aurora-role', 'char-limit');
+                    limitEl.setAttribute('aria-live', 'polite');
                     limitEl.hidden = true;
                     // Inserimos antes do botão enviar para ficar junto aos controles
                     const sendBtn = toolbar.querySelector('[data-aurora-role="send"]');
@@ -941,12 +1086,12 @@
             } else {
                 // No layout bolha, preferimos o contador abaixo do input (fora do form), acima do footer
                 const place = container.querySelector('[data-aurora-role="char-limit"]')
-                           || container.querySelector('.aurora-bubble__footer');
+                    || container.querySelector('.aurora-bubble__footer');
                 if (place) {
                     limitEl = document.createElement('div');
                     limitEl.className = 'aurora-bubble__limit';
-                    limitEl.setAttribute('data-aurora-role','char-limit');
-                    limitEl.setAttribute('aria-live','polite');
+                    limitEl.setAttribute('data-aurora-role', 'char-limit');
+                    limitEl.setAttribute('aria-live', 'polite');
                     limitEl.hidden = true;
                     if (place.classList && place.classList.contains('aurora-bubble__footer')) {
                         place.parentNode.insertBefore(limitEl, place);
@@ -966,9 +1111,9 @@
                 if (!toolbar) return null;
                 noticeEl = document.createElement('span');
                 noticeEl.className = 'aurora-session__notice';
-                noticeEl.setAttribute('data-aurora-role','notice');
-                noticeEl.setAttribute('role','status');
-                noticeEl.setAttribute('aria-live','polite');
+                noticeEl.setAttribute('data-aurora-role', 'notice');
+                noticeEl.setAttribute('role', 'status');
+                noticeEl.setAttribute('aria-live', 'polite');
                 noticeEl.hidden = true;
                 // Coloca após a hint
                 const hint = toolbar.querySelector('.aurora-session__hint');
@@ -979,9 +1124,9 @@
                 if (!composer) return null;
                 noticeEl = document.createElement('div');
                 noticeEl.className = 'aurora-bubble__notice';
-                noticeEl.setAttribute('data-aurora-role','notice');
-                noticeEl.setAttribute('role','status');
-                noticeEl.setAttribute('aria-live','polite');
+                noticeEl.setAttribute('data-aurora-role', 'notice');
+                noticeEl.setAttribute('role', 'status');
+                noticeEl.setAttribute('aria-live', 'polite');
                 noticeEl.hidden = true;
                 // Inserir após o input
                 const inp = composer.querySelector('.aurora-bubble__input');
@@ -994,16 +1139,16 @@
             const n = ensureNotice(); if (!n) return;
             n.textContent = msg;
             n.hidden = false;
-            n.classList.remove('is-info','is-error');
+            n.classList.remove('is-info', 'is-error');
             n.classList.add(type === 'error' ? 'is-error' : 'is-info');
             // auto-hide depois de alguns segundos
             clearTimeout(showNotice._to);
-            showNotice._to = setTimeout(() => { try { n.hidden = true; } catch(e){} }, 4000);
+            showNotice._to = setTimeout(() => { try { n.hidden = true; } catch (e) { } }, 4000);
         };
         const hideNotice = () => { if (noticeEl) noticeEl.hidden = true; };
 
         if (maxChars > 0) {
-            try { input.setAttribute('maxlength', String(maxChars)); } catch(e) {}
+            try { input.setAttribute('maxlength', String(maxChars)); } catch (e) { }
             const update = () => {
                 const used = (input.value || '').length;
                 const remaining = Math.max(0, maxChars - used);
@@ -1030,17 +1175,17 @@
                     if (firstBot && i18n.welcomeBot) firstBot.textContent = i18n.welcomeBot;
                 }
             }
-        } catch(e) { /* no-op */ }
+        } catch (e) { /* no-op */ }
 
-    let interactions = 0;
+        let interactions = 0;
         let isSending = false;
         let sessionId = generateSession();
         const maxTurns = parseInt(container.dataset.maxTurns || '0', 10);
         const sendForm = parseInt(container.dataset.sendForm || '0', 10) === 1;
         const agentId = parseInt(container.dataset.agent || '0', 10);
-    // Pré-chat form state
-    let prechatCollected = false;
-    let prechatData = null;
+        // Pré-chat form state
+        let prechatCollected = false;
+        let prechatData = null;
 
         // handoff removido
 
@@ -1122,7 +1267,7 @@
                     input.disabled = true;
                     const sendBtn = container.querySelector('[data-aurora-role="send"]');
                     if (sendBtn) sendBtn.disabled = true;
-                } catch(e) {}
+                } catch (e) { }
             };
 
             const startTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -1217,7 +1362,7 @@
                                     messages.appendChild(audioMsg);
                                 }
                             }
-                        } catch(e) { /* ignore */ }
+                        } catch (e) { /* ignore */ }
                         if (typeof performance !== 'undefined') {
                             const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
                             setStatus('complete', elapsed);
@@ -1243,7 +1388,7 @@
                             const sendBtn = container.querySelector('[data-aurora-role="send"]');
                             if (sendBtn) sendBtn.disabled = false;
                             input.focus();
-                        } catch(e) {}
+                        } catch (e) { }
                     }
                 };
 
@@ -1274,7 +1419,7 @@
                         const sendBtn = container.querySelector('[data-aurora-role="send"]');
                         if (sendBtn) sendBtn.disabled = false;
                         input.focus();
-                    } catch(e) {}
+                    } catch (e) { }
                 });
 
                 return; // não continuar o fluxo padrão até o formulário ser resolvido
@@ -1315,12 +1460,12 @@
                             messages.appendChild(audioMsg);
                         }
                     }
-                } catch(e) { /* ignore */ }
+                } catch (e) { /* ignore */ }
 
                 // anexos (urls) opcionais
                 try {
                     const last = arguments.callee.lastResponse || null; // not reliable, keep simple: we will use extra fetch return soon
-                } catch(e) {}
+                } catch (e) { }
 
                 if (typeof performance !== 'undefined') {
                     const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
@@ -1348,7 +1493,7 @@
                     const sendBtn = container.querySelector('[data-aurora-role="send"]');
                     if (sendBtn) sendBtn.disabled = false;
                     input.focus();
-                } catch(e) {}
+                } catch (e) { }
             }
         });
 
@@ -1388,7 +1533,7 @@
                 if (!footer) {
                     footer = document.createElement('div');
                     footer.className = 'aurora-bubble__footer';
-                    footer.setAttribute('data-aurora-role','footer');
+                    footer.setAttribute('data-aurora-role', 'footer');
                     const toastC = bubble.querySelector('[data-aurora-role="toast-container"]');
                     if (toastC && toastC.parentNode) toastC.parentNode.insertBefore(footer, toastC);
                     else bubble.appendChild(footer);
@@ -1396,7 +1541,7 @@
                 if (!footer.innerHTML || !/Powered by/i.test(footer.textContent)) {
                     footer.innerHTML = '<small>Feito por Aurora Tecnologia e Inovação</small>';
                 }
-            } catch(_) {}
+            } catch (_) { }
 
             const openPanel = () => {
                 if (!panel.hidden) return;
@@ -1465,13 +1610,13 @@
             try {
                 const u = new URL(href);
                 const host = u.hostname.toLowerCase();
-                const denyHosts = ['whatsapp.com','youtube.com','youtu.be','facebook.com','fb.com','instagram.com','t.me','telegram.me', 'wa.me', 'twitter.com', 'linkedin.com'];
+                const denyHosts = ['whatsapp.com', 'youtube.com', 'youtu.be', 'facebook.com', 'fb.com', 'instagram.com', 't.me', 'telegram.me', 'wa.me', 'twitter.com', 'linkedin.com'];
                 const mustNewTab = denyHosts.some(d => host === d || host.endsWith('.' + d));
                 if (mustNewTab) {
                     window.open(href, '_blank', 'noopener');
                     return;
                 }
-            } catch(_) {}
+            } catch (_) { }
             const isImg = isImageURL(href);
             AuroraModal.openURL(href, a.textContent || href, isImg);
         }, true);

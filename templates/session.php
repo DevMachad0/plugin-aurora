@@ -17,12 +17,16 @@
             border-radius: var(--aurora-radius-xl, 16px);
             box-shadow: var(--aurora-shadow-md, 0 4px 16px rgba(0, 0, 0, .06));
             overflow: hidden;
+            height: 100%;
+            min-height: 0;
         }
 
         .aurora-session__surface {
             display: grid;
             grid-template-rows: auto 1fr auto auto;
             min-height: min(72vh, 820px);
+            height: 100%;
+            max-height: 100%;
         }
 
         /* Header sticky com presença */
@@ -149,10 +153,16 @@
             flex-direction: column;
             gap: clamp(10px, 1.4vw, 14px);
             padding: clamp(14px, 2.6vw, 22px) clamp(14px, 3vw, 24px) clamp(6px, 1.6vw, 12px);
-            background: var(--aurora-color-soft-bg, #f8fafc);
+            /* Glassmorphism - efeito vitrificado */
+            background: rgba(248, 250, 252, 0.75);
+            backdrop-filter: blur(12px) saturate(1.2);
+            -webkit-backdrop-filter: blur(12px) saturate(1.2);
+            border: 1px solid rgba(255, 255, 255, 0.3);
             border-bottom: 1px solid var(--aurora-color-border, #e5e7eb);
             overflow-y: auto;
             scroll-behavior: smooth;
+            flex: 1;
+            min-height: 0;
         }
 
         .aurora-session__message {
@@ -437,8 +447,6 @@
             }
 
             .aurora-session__messages {
-                min-height: 360px;
-                max-height: 560px;
                 border-radius: var(--aurora-radius-lg, 12px);
                 margin: 8px 12px;
             }
@@ -495,8 +503,7 @@
             <label class="screen-reader-text" for="aurora-session-input">Mensagem</label>
             <div class="aurora-input-group">
                 <input id="aurora-session-input" class="aurora-session__input" rows="3"
-                    placeholder="Escreva uma mensagem... (Enter = nova linha, Ctrl/Cmd+Enter = enviar)"
-                    required></input>
+                    placeholder="Escreva uma mensagem... (Enter = enviar)" required></input>
                 <div class="aurora-actions">
                     <button type="button" class="aurora-session__mic" data-aurora-role="mic"
                         aria-label="Gravar mensagem de voz" title="Gravar mensagem de voz">

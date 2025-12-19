@@ -83,7 +83,11 @@
 }
 
 .aurora-theme-dark .aurora-session__messages {
-  background: var(--aurora-color-soft-bg);
+  /* Glassmorphism - efeito vitrificado escuro */
+  background: rgba(15, 23, 42, 0.70);
+  backdrop-filter: blur(14px) saturate(1.3);
+  -webkit-backdrop-filter: blur(14px) saturate(1.3);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-color: var(--aurora-color-border);
 }
 
@@ -181,4 +185,110 @@
 
 .aurora-theme-dark .aurora-toast.is-error {
   background: #7f1d1d;
+}
+
+/* Markdown: blocos de código e inline code no tema escuro */
+.aurora-theme-dark .aurora-bubble__bubble pre,
+.aurora-theme-dark .aurora-session__bubble pre {
+  background: #1e293b;
+  border-color: #334155;
+  color: #e2e8f0;
+}
+
+.aurora-theme-dark .aurora-bubble__bubble pre code,
+.aurora-theme-dark .aurora-session__bubble pre code {
+  color: #e2e8f0;
+}
+
+.aurora-theme-dark .aurora-bubble__bubble code,
+.aurora-theme-dark .aurora-session__bubble code {
+  background: #1e293b;
+  color: #e2e8f0;
+  border-color: #334155;
+}
+
+/* Outros elementos markdown no tema escuro */
+.aurora-theme-dark .aurora-bubble__bubble a,
+.aurora-theme-dark .aurora-session__bubble a {
+  color: #818cf8;
+}
+
+.aurora-theme-dark .aurora-bubble__bubble blockquote,
+.aurora-theme-dark .aurora-session__bubble blockquote {
+  border-left-color: #818cf8;
+  color: #94a3b8;
+}
+
+.aurora-theme-dark .aurora-bubble__bubble th,
+.aurora-theme-dark .aurora-session__bubble th {
+  background: #1e293b;
+}
+
+.aurora-theme-dark .aurora-bubble__bubble th,
+.aurora-theme-dark .aurora-bubble__bubble td,
+.aurora-theme-dark .aurora-session__bubble th,
+.aurora-theme-dark .aurora-session__bubble td {
+  border-color: #334155;
+}
+
+/* Títulos markdown no tema escuro */
+.aurora-theme-dark .aurora-bubble__bubble h1,
+.aurora-theme-dark .aurora-bubble__bubble h2,
+.aurora-theme-dark .aurora-bubble__bubble h3,
+.aurora-theme-dark .aurora-bubble__bubble h4,
+.aurora-theme-dark .aurora-bubble__bubble h5,
+.aurora-theme-dark .aurora-bubble__bubble h6,
+.aurora-theme-dark .aurora-session__bubble h1,
+.aurora-theme-dark .aurora-session__bubble h2,
+.aurora-theme-dark .aurora-session__bubble h3,
+.aurora-theme-dark .aurora-session__bubble h4,
+.aurora-theme-dark .aurora-session__bubble h5,
+.aurora-theme-dark .aurora-session__bubble h6 {
+  color: #f1f5f9;
+}
+
+/* Parágrafos e texto geral no tema escuro */
+.aurora-theme-dark .aurora-bubble__bubble p,
+.aurora-theme-dark .aurora-session__bubble p {
+  color: #e2e8f0;
+}
+
+/* Listas no tema escuro */
+.aurora-theme-dark .aurora-bubble__bubble ul,
+.aurora-theme-dark .aurora-bubble__bubble ol,
+.aurora-theme-dark .aurora-bubble__bubble li,
+.aurora-theme-dark .aurora-session__bubble ul,
+.aurora-theme-dark .aurora-session__bubble ol,
+.aurora-theme-dark .aurora-session__bubble li {
+  color: #e2e8f0;
+}
+
+/* Texto em negrito e itálico no tema escuro */
+.aurora-theme-dark .aurora-bubble__bubble strong,
+.aurora-theme-dark .aurora-bubble__bubble b,
+.aurora-theme-dark .aurora-bubble__bubble em,
+.aurora-theme-dark .aurora-bubble__bubble i,
+.aurora-theme-dark .aurora-session__bubble strong,
+.aurora-theme-dark .aurora-session__bubble b,
+.aurora-theme-dark .aurora-session__bubble em,
+.aurora-theme-dark .aurora-session__bubble i {
+  color: inherit;
+}
+
+/* Linhas horizontais no tema escuro */
+.aurora-theme-dark .aurora-bubble__bubble hr,
+.aurora-theme-dark .aurora-session__bubble hr {
+  border-color: #334155;
+}
+
+/* Tachado no tema escuro */
+.aurora-theme-dark .aurora-bubble__bubble del,
+.aurora-theme-dark .aurora-session__bubble del {
+  color: #94a3b8;
+}
+
+/* Task lists no tema escuro */
+.aurora-theme-dark .aurora-bubble__bubble .task-item input[type="checkbox"],
+.aurora-theme-dark .aurora-session__bubble .task-item input[type="checkbox"] {
+  accent-color: #818cf8;
 }
